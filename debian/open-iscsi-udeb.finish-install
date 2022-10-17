@@ -1,0 +1,24 @@
+#! /bin/sh
+
+set -e
+
+got_iscsi=
+for f in /etc/iscsi/*; do
+	# Ignore iscsid.conf, as that will always be present, even if
+	# iSCSI is not used. (See Debian bug #863435.)
+	if [ x"$f" = x"/etc/iscsi/iscsid.conf" ] ; then
+		continue
+	fi
+	[ -e "$f" ] || continue
+	got_iscsi=1
+	break
+done
+
+if [ "$got_iscsi" ]; then
+	# Copy the configuration to the target...
+	cp -a /etc/iscsi /target/etc/
+	if [ -x /target/usr/sbin/update-initramfs ] ; then
+		echo "iSCSI detected, refreshing initramfs"
+		/bin/in-target update-initramfs -k all -u
+	fi
+fi
