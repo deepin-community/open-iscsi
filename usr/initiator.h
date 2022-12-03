@@ -32,18 +32,63 @@
 #include "config.h"
 #include "actor.h"
 #include "list.h"
+#include "log.h"
 
+#ifndef ISCSI_CONFIG_ROOT
 #define ISCSI_CONFIG_ROOT	"/etc/iscsi/"
-
-#define CONFIG_FILE		ISCSI_CONFIG_ROOT"iscsid.conf"
-#define INITIATOR_NAME_FILE	ISCSI_CONFIG_ROOT"initiatorname.iscsi"
-
-#define PID_FILE		"/var/run/iscsid.pid"
-#ifndef LOCK_DIR
-#define LOCK_DIR		"/var/lock/iscsi"
 #endif
+
+#define CONFIG_FILE		ISCSI_CONFIG_ROOT"/iscsid.conf"
+#define INITIATOR_NAME_FILE	ISCSI_CONFIG_ROOT"/initiatorname.iscsi"
+
+#define PID_FILE		"/run/iscsid.pid"
+
+#ifndef LOCK_DIR
+#define LOCK_DIR		"/run/lock/iscsi"
+#endif
+
 #define LOCK_FILE		LOCK_DIR"/lock"
 #define LOCK_WRITE_FILE		LOCK_DIR"/lock.write"
+
+#define conn_info(conn, fmt, ...)				\
+do {								\
+	if (conn->session == NULL) { 				\
+		log_info(fmt, ##__VA_ARGS__);			\
+		break;						\
+	}							\
+	log_info("connection%d:%d " fmt,			\
+		   conn->session->id, conn->id, ##__VA_ARGS__);	\
+} while(0)
+
+#define conn_warn(conn, fmt, ...)				\
+do {								\
+	if (conn->session == NULL) { 				\
+		log_warning(fmt, ##__VA_ARGS__);		\
+		break;						\
+	}							\
+	log_warning("connection%d:%d " fmt,			\
+		   conn->session->id, conn->id, ##__VA_ARGS__);	\
+} while(0)
+
+#define conn_error(conn, fmt, ...)				\
+do {								\
+	if (conn->session == NULL) { 				\
+		log_error(fmt, ##__VA_ARGS__);			\
+		break;						\
+	}							\
+	log_error("connection%d:%d " fmt,			\
+		   conn->session->id, conn->id, ##__VA_ARGS__);	\
+} while(0)
+
+#define conn_debug(level, conn, fmt, ...)			\
+do {								\
+	if (conn->session == NULL) { 				\
+		log_debug(level, fmt, ##__VA_ARGS__);		\
+		break;						\
+	}							\
+	log_debug(level, "connection%d:%d " fmt,		\
+		   conn->session->id, conn->id, ##__VA_ARGS__);	\
+} while(0)
 
 typedef enum iscsi_session_r_stage_e {
 	R_STAGE_NO_CHANGE,
@@ -212,6 +257,7 @@ typedef struct iscsi_session {
 	int erl;
 	uint32_t imm_data_en;
 	uint32_t initial_r2t_en;
+	uint32_t max_r2t;
 	uint32_t fast_abort;
 	uint32_t first_burst;
 	uint32_t max_burst;
@@ -242,11 +288,13 @@ typedef struct iscsi_session {
 	char username_in[AUTH_STR_MAX_LEN];
 	uint8_t password_in[AUTH_STR_MAX_LEN];
 	int password_in_length;
+	unsigned int chap_algs[AUTH_CHAP_ALG_MAX_COUNT];
 	iscsi_conn_t conn[ISCSI_CONN_MAX];
 	uint64_t param_mask;
 
 	/* connection reopens during recovery */
 	int reopen_cnt;
+	int reopen_max;
 	queue_task_t reopen_qtask;
 	iscsi_session_r_stage_e r_stage;
 	uint32_t replacement_timeout;
@@ -262,6 +310,8 @@ typedef struct iscsi_session {
 	 */
 	queue_task_t *notify_qtask;
 } iscsi_session_t;
+
+#define	INVALID_SESSION_ID	(uint32_t)-1
 
 /* login.c */
 

@@ -33,6 +33,7 @@
 
 char *log_name;
 int log_level = 0;
+struct logarea *la = NULL;
 
 static int log_stop_daemon = 0;
 static void (*log_func)(int prio, void *priv, const char *fmt, va_list ap);
@@ -72,7 +73,7 @@ static int logarea_init (int size)
 	logdbg(stderr,"enter logarea_init\n");
 
 	if ((shmid = shmget(IPC_PRIVATE, sizeof(struct logarea),
-			    0644 | IPC_CREAT | IPC_EXCL)) == -1) {
+			    0600 | IPC_CREAT | IPC_EXCL)) == -1) {
 		syslog(LOG_ERR, "shmget logarea failed %d", errno);
 		return 1;
 	}
@@ -92,7 +93,7 @@ static int logarea_init (int size)
 		size = DEFAULT_AREA_SIZE;
 
 	if ((shmid = shmget(IPC_PRIVATE, size,
-			    0644 | IPC_CREAT | IPC_EXCL)) == -1) {
+			    0600 | IPC_CREAT | IPC_EXCL)) == -1) {
 		syslog(LOG_ERR, "shmget msg failed %d", errno);
 		free_logarea();
 		return 1;
@@ -113,7 +114,7 @@ static int logarea_init (int size)
 	la->tail = la->start;
 
 	if ((shmid = shmget(IPC_PRIVATE, MAX_MSG_SIZE + sizeof(struct logmsg),
-			    0644 | IPC_CREAT | IPC_EXCL)) == -1) {
+			    0600 | IPC_CREAT | IPC_EXCL)) == -1) {
 		syslog(LOG_ERR, "shmget logmsg failed %d", errno);
 		free_logarea();
 		return 1;
@@ -186,14 +187,17 @@ int log_enqueue (int prio, const char * fmt, va_list ap)
 
 	/* not enough space on tail : rewind */
 	if (la->head <= la->tail &&
-	    (len + sizeof(struct logmsg)) > (la->end - la->tail)) {
+	    (long)(len + sizeof(struct logmsg)) > (la->end - la->tail)) {
 		logdbg(stderr, "enqueue: rewind tail to %p\n", la->tail);
 			la->tail = la->start;
+
+			if (la->empty)
+				la->head = lastmsg = la->tail;
 	}
 
 	/* not enough space on head : drop msg */
 	if (la->head > la->tail &&
-	    (len + sizeof(struct logmsg)) > (la->head - la->tail)) {
+	    (long)(len + sizeof(struct logmsg)) > (la->head - la->tail)) {
 		logdbg(stderr, "enqueue: log area overrun, drop msg\n");
 
 		if (!la->empty)
@@ -259,7 +263,10 @@ static void log_syslog (void * buff)
 	syslog(msg->prio, "%s", (char *)&msg->str);
 }
 
-void log_do_log_daemon(int prio, void *priv, const char *fmt, va_list ap)
+void log_do_log_daemon(int prio,
+		       __attribute__((unused))void *priv,
+		       const char *fmt,
+		       va_list ap)
 {
 	struct sembuf ops[1];
 
@@ -279,7 +286,10 @@ void log_do_log_daemon(int prio, void *priv, const char *fmt, va_list ap)
 		syslog(LOG_ERR, "semop up failed");
 }
 
-void log_do_log_std(int prio, void *priv, const char *fmt, va_list ap)
+void log_do_log_std(int prio,
+		    __attribute__((unused))void *priv,
+		    const char *fmt,
+		    va_list ap)
 {
 	if (prio == LOG_INFO) {
 		vfprintf(stdout, fmt, ap);
@@ -438,7 +448,7 @@ int log_init(char *program_name, int size,
 			syslog(LOG_ERR, "starting logger failed");
 			exit(1);
 		} else if (pid) {
-			syslog(LOG_WARNING,
+			syslog(LOG_INFO,
 			       "iSCSI logger with pid=%d started!", pid);
 			return pid;
 		}

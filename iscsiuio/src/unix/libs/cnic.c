@@ -55,6 +55,7 @@
 #include <sys/types.h>
 #include <sys/user.h>
 #include <sys/socket.h>
+#include <sys/mman.h>
 
 #include "uip_arp.h"
 #include "nic.h"
@@ -65,14 +66,12 @@
 #include "cnic.h"
 #include "iscsi_if.h"
 #include "ipv6_ndpc.h"
+#include "qedi.h"
 
 /*******************************************************************************
  * Constants
  ******************************************************************************/
 #define PFX "CNIC "
-
-static const uip_ip6addr_t all_ones_addr6 = {
-	0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff };
 
 /*******************************************************************************
  * Constants shared between the bnx2 and bnx2x modules
@@ -80,6 +79,13 @@ static const uip_ip6addr_t all_ones_addr6 = {
 const char bnx2i_library_transport_name[] = "bnx2i";
 const size_t bnx2i_library_transport_name_size =
 			sizeof(bnx2i_library_transport_name);
+
+/*******************************************************************************
+ * Constants for qedi module
+ ******************************************************************************/
+const char qedi_library_transport_name[] = "qedi";
+const size_t qedi_library_transport_name_size =
+			sizeof(qedi_library_transport_name);
 
 /******************************************************************************
  * Netlink Functions
@@ -97,6 +103,8 @@ static int cnic_arp_send(nic_t *nic, nic_interface_t *nic_iface, int fd,
 	static const uint8_t multicast_mac[] = {
 				0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 
+	LOG_DEBUG(PFX "%s: host:%d - try getting xmit mutex cnic arp send",
+		  nic->log_name, nic->host_no);
 	rc = pthread_mutex_trylock(&nic->xmit_mutex);
 	if (rc != 0) {
 		LOG_DEBUG(PFX "%s: could not get xmit_mutex", nic->log_name);
@@ -106,6 +114,7 @@ static int cnic_arp_send(nic_t *nic, nic_interface_t *nic_iface, int fd,
 	eth = (*nic->ops->get_tx_pkt) (nic);
 	if (eth == NULL) {
 		LOG_WARN(PFX "%s: couldn't get tx packet", nic->log_name);
+		pthread_mutex_unlock(&nic->xmit_mutex);
 		return -EAGAIN;
 	}
 
@@ -132,6 +141,7 @@ static int cnic_arp_send(nic_t *nic, nic_interface_t *nic_iface, int fd,
 	memcpy(&addr.s_addr, &dst_ip, sizeof(addr.s_addr));
 	LOG_DEBUG(PFX "%s: Sent cnic arp request for IP: %s",
 		  nic->log_name, addr_str);
+	pthread_mutex_unlock(&nic->xmit_mutex);
 
 	return 0;
 }
@@ -194,6 +204,8 @@ static int cnic_neigh_soliciation_send(nic_t *nic,
 
 	LOG_DEBUG(PFX "%s: Sent cnic ICMPv6 neighbor request %s",
 		  nic->log_name, addr_str);
+
+	pthread_mutex_unlock(&nic->xmit_mutex);
 
 	return 0;
 }
@@ -350,9 +362,8 @@ int cnic_handle_ipv4_iscsi_path_req(nic_t *nic, int fd,
 			       &nic_iface->ustack.default_route_addr,
 			       sizeof(dst_addr));
 		} else {
-			arp_retry = MAX_ARP_RETRY;
-			LOG_DEBUG(PFX "%s: no default", nic->log_name);
-			goto done;
+			LOG_DEBUG(PFX "%s: no default route address",
+				  nic->log_name);
 		}
 	}
 	arp_retry = 0;
@@ -423,9 +434,6 @@ done:
 		status = -EIO;
 		rc = -EIO;
 	}
-
-	if (status != 0 || rc != 0)
-		pthread_mutex_unlock(&nic->xmit_mutex);
 
 	if (ev) {
 		cnic_nl_neigh_rsp(nic, fd, ev, path, mac_addr,
@@ -622,9 +630,6 @@ done:
 		status = -EIO;
 		rc = -EIO;
 	}
-
-	if (status != 0 || rc != 0)
-		pthread_mutex_unlock(&nic->xmit_mutex);
 
 	if (ev) {
 		cnic_nl_neigh_rsp(nic, fd, ev, path, mac_addr,

@@ -1,15 +1,18 @@
-#!/usr/bin/dh-exec
-usr/iscsiadm                           /sbin
-build.deb/iscsid                       /sbin
-build.deb/iscsistart                   /sbin
-utils/iscsi_discovery                  /sbin
-utils/iscsi-iname                      /sbin
-etc/iscsid.conf                        /etc/iscsi
-debian/extra/initramfs.hook         => /usr/share/initramfs-tools/hooks/iscsi
-debian/extra/initramfs.local-top    => /usr/share/initramfs-tools/scripts/local-top/iscsi
-debian/extra/initramfs.local-bottom => /usr/share/initramfs-tools/scripts/local-bottom/iscsi
-debian/extra/umountiscsi.sh            /lib/open-iscsi
-debian/extra/logout-all.sh             /lib/open-iscsi
-debian/extra/startup-checks.sh         /lib/open-iscsi
-debian/extra/activate-storage.sh       /lib/open-iscsi
-debian/open-iscsi.kmod              => /lib/modules-load.d/open-iscsi.conf
+etc/iscsi/iscsid.conf
+debian/extra/umountiscsi.sh lib/open-iscsi/
+debian/extra/logout-all.sh lib/open-iscsi/
+debian/extra/startup-checks.sh lib/open-iscsi/
+debian/extra/activate-storage.sh lib/open-iscsi/
+debian/extra/net-interface-handler lib/open-iscsi/
+debian/iscsid.service lib/systemd/system/
+usr/lib/systemd/system/iscsid.socket lib/systemd/system/
+debian/extra/udev/* lib/udev/rules.d/
+debian/open-iscsi.finalrd usr/share/finalrd/
+debian/extra/initramfs/hooks/iscsi usr/share/initramfs-tools/hooks/
+debian/extra/initramfs/local-top/iscsi usr/share/initramfs-tools/scripts/local-top/
+debian/extra/initramfs/local-bottom/iscsi usr/share/initramfs-tools/scripts/local-bottom/
+sbin/iscsiadm
+sbin/iscsid
+sbin/iscsi_discovery
+sbin/iscsi-iname
+sbin/iscsistart

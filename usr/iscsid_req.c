@@ -18,12 +18,14 @@
  *
  * See the file COPYING included with this distribution for more details.
  */
+#include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/un.h>
+#include <poll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 
@@ -33,6 +35,7 @@
 #include "iscsi_util.h"
 #include "config.h"
 #include "iscsi_err.h"
+#include "iscsid_req.h"
 #include "uip_mgmt_ipc.h"
 
 static void iscsid_startup(void)
@@ -43,7 +46,7 @@ static void iscsid_startup(void)
 	if (!startup_cmd) {
 		log_error("iscsid is not running. Could not start it up "
 			  "automatically using the startup command in the "
-			  "/etc/iscsi/iscsid.conf iscsid.startup setting. "
+			  "iscsid.conf iscsid.startup setting. "
 			  "Please check that the file exists or that your "
 			  "init scripts have started iscsid.");
 		return;
@@ -52,6 +55,8 @@ static void iscsid_startup(void)
 	if (system(startup_cmd) < 0)
 		log_error("Could not execute '%s' (err %d)",
 			  startup_cmd, errno);
+
+	free(startup_cmd);
 }
 
 #define MAXSLEEP 128
@@ -92,13 +97,25 @@ static int ipc_connect(int *fd, char *unix_sock_name, int start_iscsid)
 		if (nsec <= MAXSLEEP/2)
 			sleep(nsec);
 	}
+	close(*fd);
+	*fd = -1;
 	log_error("can not connect to iSCSI daemon (%d)!", errno);
 	return ISCSI_ERR_ISCSID_NOTCONN;
 }
 
+char iscsid_namespace[64] = ISCSIADM_NAMESPACE;
+
+void iscsid_set_namespace(pid_t pid) {
+	if (pid) {
+		snprintf(iscsid_namespace, 64, ISCSIADM_NAMESPACE "-%d", pid);
+	} else {
+		snprintf(iscsid_namespace, 64, ISCSIADM_NAMESPACE);
+	}
+}
+
 static int iscsid_connect(int *fd, int start_iscsid)
 {
-	return ipc_connect(fd, ISCSIADM_NAMESPACE, start_iscsid);
+	return ipc_connect(fd, iscsid_namespace, start_iscsid);
 }
 
 int iscsid_request(int *fd, iscsiadm_req_t *req, int start_iscsid)
@@ -118,16 +135,38 @@ int iscsid_request(int *fd, iscsiadm_req_t *req, int start_iscsid)
 	return ISCSI_SUCCESS;
 }
 
-int iscsid_response(int fd, iscsiadm_cmd_e cmd, iscsiadm_rsp_t *rsp)
+int iscsid_response(int fd, iscsiadm_cmd_e cmd, iscsiadm_rsp_t *rsp,
+		    int timeout)
 {
-	int iscsi_err;
+	size_t len = sizeof(*rsp);
+	int iscsi_err = ISCSI_ERR_ISCSID_COMM_ERR;
 	int err;
 
-	if ((err = recv(fd, rsp, sizeof(*rsp), MSG_WAITALL)) != sizeof(*rsp)) {
-		log_error("got read error (%d/%d), daemon died?", err, errno);
-		iscsi_err = ISCSI_ERR_ISCSID_COMM_ERR;
-	} else
-		iscsi_err = rsp->err;
+	while (len) {
+		struct pollfd pfd;
+
+		pfd.fd = fd;
+		pfd.events = POLLIN;
+		err = poll(&pfd, 1, timeout);
+		if (!err) {
+			return ISCSI_ERR_REQ_TIMEDOUT;
+		} else if (err < 0) {
+			if (errno == EINTR)
+				continue;
+			log_error("got poll error (%d/%d), daemon died?",
+				  err, errno);
+			return ISCSI_ERR_ISCSID_COMM_ERR;
+		} else if (pfd.revents & POLLIN) {
+			err = recv(fd, rsp, sizeof(*rsp), MSG_WAITALL);
+			if (err <= 0) {
+				log_error("read error (%d/%d), daemon died?",
+					  err, errno);
+				break;
+			}
+			len -= err;
+			iscsi_err = rsp->err;
+		}
+	}
 	close(fd);
 
 	if (!iscsi_err && cmd != rsp->command)
@@ -136,7 +175,7 @@ int iscsid_response(int fd, iscsiadm_cmd_e cmd, iscsiadm_rsp_t *rsp)
 }
 
 int iscsid_exec_req(iscsiadm_req_t *req, iscsiadm_rsp_t *rsp,
-				int start_iscsid)
+		    int start_iscsid, int tmo)
 {
 	int fd;
 	int err;
@@ -145,7 +184,7 @@ int iscsid_exec_req(iscsiadm_req_t *req, iscsiadm_rsp_t *rsp,
 	if (err)
 		return err;
 
-	return iscsid_response(fd, req->command, rsp);
+	return iscsid_response(fd, req->command, rsp, tmo);
 }
 
 int iscsid_req_wait(iscsiadm_cmd_e cmd, int fd)
@@ -153,7 +192,7 @@ int iscsid_req_wait(iscsiadm_cmd_e cmd, int fd)
 	iscsiadm_rsp_t rsp;
 
 	memset(&rsp, 0, sizeof(iscsiadm_rsp_t));
-	return iscsid_response(fd, cmd, &rsp);
+	return iscsid_response(fd, cmd, &rsp, -1);
 }
 
 int iscsid_req_by_rec_async(iscsiadm_cmd_e cmd, node_rec_t *rec, int *fd)
@@ -210,7 +249,8 @@ int uip_broadcast(void *buf, size_t buf_len, int fd_flags, uint32_t *status)
 	iscsid_uip_rsp_t rsp;
 	int flags;
 	int count;
-
+	size_t write_res;
+	
 	err = uip_connect(&fd);
 	if (err) {
 		log_warning("uIP daemon is not up");
@@ -220,10 +260,10 @@ int uip_broadcast(void *buf, size_t buf_len, int fd_flags, uint32_t *status)
 	log_debug(3, "connected to uIP daemon");
 
 	/*  Send the data to uIP */
-	err = write(fd, buf, buf_len);
-	if (err != buf_len) {
+	write_res = write(fd, buf, buf_len);
+	if (write_res != buf_len) {
 		log_error("got write error (%d/%d), daemon died?",
-			  err, errno);
+			  (int)write_res, errno);
 		close(fd);
 		return ISCSI_ERR_ISCSID_COMM_ERR;
 	}
@@ -252,9 +292,8 @@ int uip_broadcast(void *buf, size_t buf_len, int fd_flags, uint32_t *status)
 		/*  Wait for the response */
 		err = read(fd, &rsp, sizeof(rsp));
 		if (err == sizeof(rsp)) {
-			log_debug(3, "Broadcasted to uIP with length: %ld "
-				     "cmd: 0x%x rsp: 0x%x", buf_len,
-				     rsp.command, rsp.err);
+			log_debug(3, "Broadcasted to uIP with length: %zu cmd: 0x%x rsp: 0x%x",
+				  buf_len, rsp.command, rsp.err);
 			err = 0;
 			break;
 		} else if ((err == -1) && (errno == EAGAIN)) {

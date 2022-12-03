@@ -12,9 +12,9 @@ dnl             Benjamin Li  (benli@broadcom.com)
 dnl
 
 PACKAGE=iscsiuio
-VERSION=0.7.8.2
+VERSION=0.7.8.6
 
-AC_INIT([iscsiuio], [0.7.8.2], [QLogic-Storage-Upstream@qlogic.com])
+AC_INIT([iscsiuio], [0.7.8.6], [QLogic-Storage-Upstream@cavium.com])
 
 AM_INIT_AUTOMAKE
 AC_CONFIG_HEADER(config.h)
@@ -63,6 +63,25 @@ AC_ARG_ENABLE(debug,
         CFLAGS="${CFLAGS} -g -O0"
     fi])
 AM_CONDITIONAL([DEBUG], [test x$debug = xtrue])
+## check for systemd support, default on
+AC_ARG_WITH([systemd],
+	    AS_HELP_STRING([--without-systemd], [Build without systemd]),
+    [case "${withval}" in
+     yes) with_libsystemd=yes ;;
+     no)  wth_libsystemd=no ;;
+     *)   AC_MSG_ERROR([bad value $withval for --with-systemd]) ;;
+     esac],[with_libsystemd=auto])
+AS_IF([test "$with_libsystemd" != no],[
+    PKG_CHECK_MODULES([LIBSYSTEMD],[libsystemd],[LIBS="${LIBS} $LIBSYSTEMD_LIBS"],[
+        if test "$with_libsystemd" = yes; then
+            AC_MSG_ERROR([could not find libsystemd using pkg-config])
+	else
+            CFLAGS="${CFLAGS} -DNO_SYSTEMD"
+	fi
+    ])
+],[
+    CFLAGS="${CFLAGS} -DNO_SYSTEMD"
+])
 
 AC_CONFIG_COMMANDS([default],[[
     if [ -n "$SOURCE_DATE_EPOCH" ] ; then
@@ -70,7 +89,7 @@ AC_CONFIG_COMMANDS([default],[[
     else
         echo 'char *build_date = "'`date`'";' > src/unix/build_date.c
     fi
-    echo 'char *build_date;'> src/unix/build_date.h
+    echo 'extern char *build_date;'> src/unix/build_date.h
 ]],[[]])
 
 AC_PREFIX_DEFAULT()

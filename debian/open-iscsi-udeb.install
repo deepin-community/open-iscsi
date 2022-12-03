@@ -1,11 +1,10 @@
-#!/usr/bin/dh-exec
-usr/iscsiadm                                 /bin
-utils/iscsi-iname                            /sbin
-utils/iscsi_discovery                        /sbin
-usr/iscsid                                   /sbin
-usr/iscsistart                               /sbin
-etc/iscsid.conf                              /etc/iscsi
-debian/open-iscsi-udeb.start              => /sbin/iscsi-start
-debian/open-iscsi-udeb.finish-install     => /usr/lib/finish-install.d/10open-iscsi
-# dh_lintian ignores udebs, force installation
-debian/open-iscsi-udeb.lintian-overrides  => /usr/share/lintian/overrides/open-iscsi-udeb
+debian/tmp-udeb/etc/iscsi/iscsid.conf etc/iscsi/
+debian/tmp-udeb/sbin/iscsiadm sbin/
+debian/tmp-udeb/sbin/iscsid sbin/
+debian/tmp-udeb/sbin/iscsi_discovery sbin/
+debian/tmp-udeb/sbin/iscsi-iname sbin/
+debian/tmp-udeb/sbin/iscsistart sbin/
+debian/extra/udeb/iscsi-start sbin/
+debian/extra/udeb/finish-install.d/10open-iscsi usr/lib/finish-install.d/
+# Ship shared libraries along with the executable in a single udeb
+debian/tmp-udeb/usr/lib/${DEB_HOST_MULTIARCH}/libopeniscsiusr*.so.* usr/lib/${DEB_HOST_MULTIARCH}/

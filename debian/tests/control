@@ -1,7 +1,6 @@
 Tests: install
-Restrictions: needs-root isolation-machine breaks-testbed
-Depends:
+Restrictions: needs-root, isolation-machine, breaks-testbed
 
 Tests: nested
 Restrictions: needs-root, isolation-machine, breaks-testbed, allow-stderr
-Depends: targetcli-fb, autopkgtest (>= 4~), qemu-system, qemu-utils, python3, python3-netifaces
+Depends: targetcli-fb, qemu-system, qemu-utils, python3, python3-netifaces

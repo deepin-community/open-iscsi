@@ -20,7 +20,9 @@
 #ifndef ISCSI_IFACE_H
 #define ISCSI_IFACE_H
 
-#define IFACE_CONFIG_DIR	ISCSI_CONFIG_ROOT"ifaces"
+#include <libopeniscsiusr/libopeniscsiusr.h>
+
+#define IFACE_CONFIG_DIR	ISCSI_DB_ROOT"/ifaces"
 
 struct iface_rec;
 struct list_head;
@@ -37,8 +39,8 @@ extern int iface_is_bound_by_ipaddr(struct iface_rec *iface);
 typedef int (iface_op_fn)(void *data, struct iface_rec *iface);
 extern int iface_for_each_iface(void *data, int skip_def, int *nr_found,
 				 iface_op_fn *fn);
-extern void iface_print(struct iface_rec *iface, char *prefix);
-extern int iface_print_flat(void *data, struct iface_rec *iface);
+extern void iface_print(struct iscsi_iface *iface, char *prefix);
+extern void iface_print_flat(struct iscsi_iface *iface);
 extern int iface_print_tree(void *data, struct iface_rec *iface);
 extern void iface_setup_host_bindings(void);
 extern int iface_get_by_net_binding(struct iface_rec *pattern,
@@ -57,7 +59,7 @@ extern int iface_get_param_count(struct iface_rec *iface_primary,
 				 int iface_all);
 extern int iface_build_net_config(struct iface_rec *iface_primary,
 				  int iface_all, struct iovec *iovs);
-extern int iface_get_iptype(struct iface_rec *iface);
+extern enum iscsi_iface_type iface_get_iptype(struct iface_rec *iface);
 
 #define iface_fmt "[hw=%s,ip=%s,net_if=%s,iscsi_if=%s]"
 #define iface_str(_iface) \

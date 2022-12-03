@@ -36,6 +36,11 @@
  * bnx2x.c - bnx2x user space driver
  *
  */
+
+/* include nic.h before linux/ethtool.h to avoid redefinitions of
+ * eth structs
+*/
+#include "nic.h"
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -45,6 +50,7 @@
 #include <linux/ethtool.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
+#include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/user.h>
@@ -57,7 +63,6 @@
 #include "bnx2x.h"
 #include "cnic.h"
 #include "logger.h"
-#include "nic.h"
 #include "nic_id.h"
 #include "nic_utils.h"
 #include "options.h"
@@ -345,6 +350,13 @@ static int bnx2x_is_drv_version_unknown(struct bnx2x_driver_version *version)
 	return 0;
 }
 
+static void bnx2x_set_drv_version_default(bnx2x_t *bp)
+{
+	bp->version.major = BNX2X_DEFAULT_MAJOR_VERSION;
+	bp->version.minor = BNX2X_DEFAULT_MINOR_VERSION;
+	bp->version.sub_minor = BNX2X_DEFAULT_SUB_MINOR_VERSION;
+}
+
 /**
  * bnx2x_get_drv_version() - Used to determine the driver version
  * @param bp - Device used to determine bnx2x driver version
@@ -400,8 +412,7 @@ static int bnx2x_get_drv_version(bnx2x_t *bp)
 	}
 	bp->version.sub_minor = atoi(tok);
 
-	LOG_INFO(PFX "%s: bnx2x driver using version %d.%d.%d",
-		 nic->log_name,
+	LOG_INFO(PFX "%s: interface version %d.%d.%d", nic->log_name,
 		 bp->version.major, bp->version.minor, bp->version.sub_minor);
 
 	close(fd);
@@ -705,7 +716,14 @@ static int bnx2x_open(nic_t *nic)
 		/* If version is unknown, go read from ethtool */
 		rc = bnx2x_get_drv_version(bp);
 		if (rc)
-			goto open_error;
+			bnx2x_set_drv_version_default(bp);
+		else if (!(bnx2x_is_ver60_plus(bp) || bnx2x_is_ver52(bp)))
+			bnx2x_set_drv_version_default(bp);
+
+		LOG_INFO(PFX "%s: bnx2x Use baseline version %d.%d.%d",
+			 nic->log_name,
+			 bp->version.major, bp->version.minor,
+			 bp->version.sub_minor);
 	} else {
 		/* Version is not unknown, just use it */
 		bnx2x_version.major = bp->version.major;
@@ -745,6 +763,13 @@ static int bnx2x_open(nic_t *nic)
 
 			count++;
 		}
+	}
+	if (nic->fd == INVALID_FD) {
+		LOG_ERR(PFX "%s: Could not open device: %s, [%s]",
+			nic->log_name, nic->uio_device_name,
+			strerror(errno));
+		rc = errno;
+		goto open_error;
 	}
 	if (fstat(nic->fd, &uio_stat) < 0) {
 		LOG_ERR(PFX "%s: Could not fstat device", nic->log_name);
@@ -1316,7 +1341,6 @@ void bnx2x_start_xmit(nic_t *nic, size_t len, u16_t vlan_id)
 	if ((rx_bd->addr_hi == 0) && (rx_bd->addr_lo == 0)) {
 		LOG_PACKET(PFX "%s: trying to transmit when device is closed",
 			   nic->log_name);
-		pthread_mutex_unlock(&nic->xmit_mutex);
 		return;
 	}
 
@@ -1343,12 +1367,9 @@ void bnx2x_start_xmit(nic_t *nic, size_t len, u16_t vlan_id)
 			       (bp->tx_bd_prod << 16));
 		bnx2x_flush_doorbell(bp, bp->tx_doorbell);
 	} else {
-		/* If the doorbell is not rung, the packet will not
-		   get sent.  Hence, the xmit_mutex lock will not
-		   get freed.
-		 */
-		pthread_mutex_unlock(&nic->xmit_mutex);
+		LOG_ERR(PFX "Pkt transmission failed.");
 	}
+
 	LOG_PACKET(PFX "%s: sent %d bytes using bp->tx_prod: %d",
 		   nic->log_name, len, bp->tx_prod);
 }
@@ -1411,6 +1432,8 @@ int bnx2x_write(nic_t *nic, nic_interface_t *nic_iface, packet_t *pkt)
 		   "dev->tx_cons: %d, dev->tx_prod: %d, dev->tx_bd_prod:%d",
 		   nic->log_name, pkt->buf_size,
 		   bp->tx_cons, bp->tx_prod, bp->tx_bd_prod);
+
+	pthread_mutex_unlock(&nic->xmit_mutex);
 
 	return 0;
 }
@@ -1560,15 +1583,14 @@ static int bnx2x_clear_tx_intr(nic_t *nic)
 	hw_cons = bp->get_tx_cons(bp);
 
 	if (bp->tx_cons == hw_cons) {
-		if (bp->tx_cons == bp->tx_prod) {
-			/* Make sure the xmit_mutex lock is unlock */
-			if (pthread_mutex_trylock(&nic->xmit_mutex))
-				LOG_ERR(PFX "bnx2x tx lock with prod == cons");
-
-			pthread_mutex_unlock(&nic->xmit_mutex);
+		if (bp->tx_cons == bp->tx_prod)
 			return 0;
-		}
 		return -EAGAIN;
+	}
+
+	if (pthread_mutex_trylock(&nic->xmit_mutex)) {
+		LOG_ERR(PFX "%s: unable to get xmit_mutex.", nic->log_name);
+		return -EINVAL;
 	}
 
 	LOG_PACKET(PFX "%s: clearing tx interrupt [%d %d]",
@@ -1600,6 +1622,7 @@ static int bnx2x_clear_tx_intr(nic_t *nic)
 				   nic->log_name, pkt->buf_size,
 				   bp->tx_cons, bp->tx_prod, bp->tx_bd_prod);
 
+			pthread_mutex_unlock(&nic->xmit_mutex);
 			return 0;
 		}
 

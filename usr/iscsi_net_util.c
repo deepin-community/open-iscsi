@@ -25,6 +25,7 @@
 #include <net/route.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <linux/sockios.h>
@@ -79,6 +80,22 @@ int net_get_transport_name_from_netdev(char *netdev, char *transport)
 		log_error("Could not get driver %s.", netdev);
 		err = errno;
 		goto close_sock;
+	}
+
+	/*
+	* iSCSI hardware offload for bnx2{,x} is only supported if the
+	* iscsiuio executable is available.
+	*/
+	if (!strcmp(drvinfo.driver, "bnx2x") ||
+	    !strcmp(drvinfo.driver, "bnx2")) {
+		struct stat buf;
+
+		if (stat(ISCSIUIO_PATH, &buf)) {
+			log_debug(1, "ISCSI offload not supported "
+			             "(%s not found).", ISCSIUIO_PATH);
+			err = ENODEV;
+			goto close_sock;
+			}
 	}
 
 	for (i = 0; net_drivers[i].net_drv_name != NULL; i++) {
@@ -175,23 +192,35 @@ static char *find_vlan_dev(char *netdev, int vlan_id) {
 	int sockfd, i, rc;
 
 	sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (sockfd < 0) {
+		log_error("Could not open socket for ioctl.");
+		return NULL;
+	}
 
-	strncpy(if_hwaddr.ifr_name, netdev, IFNAMSIZ);
+	strlcpy(if_hwaddr.ifr_name, netdev, IFNAMSIZ);
 	ioctl(sockfd, SIOCGIFHWADDR, &if_hwaddr);
 
-	if (if_hwaddr.ifr_hwaddr.sa_family != ARPHRD_ETHER)
+	if (if_hwaddr.ifr_hwaddr.sa_family != ARPHRD_ETHER) {
+		close(sockfd);
 		return NULL;
+	}
 
 	ifni = if_nameindex();
+	if (!ifni) {
+		log_error("Failed to find netdev:%s", strerror(errno));
+		close(sockfd);
+		return NULL;
+	}
+
 	for (i = 0; ifni[i].if_index && ifni[i].if_name; i++) {
-		strncpy(vlan_hwaddr.ifr_name, ifni[i].if_name, IFNAMSIZ);
+		strlcpy(vlan_hwaddr.ifr_name, ifni[i].if_name, IFNAMSIZ);
 		ioctl(sockfd, SIOCGIFHWADDR, &vlan_hwaddr);
 
 		if (vlan_hwaddr.ifr_hwaddr.sa_family != ARPHRD_ETHER)
 			continue;
 
 		if (!memcmp(if_hwaddr.ifr_hwaddr.sa_data, vlan_hwaddr.ifr_hwaddr.sa_data, ETH_ALEN)) {
-			strncpy(vlanrq.device1, ifni[i].if_name, IFNAMSIZ);
+			strlcpy(vlanrq.device1, ifni[i].if_name, IFNAMSIZ);
 			rc = ioctl(sockfd, SIOCGIFVLAN, &vlanrq);
 			if ((rc == 0) && (vlanrq.u.VID == vlan_id)) {
 				vlan = strdup(vlanrq.device1);
@@ -254,7 +283,8 @@ int net_setup_netdev(char *netdev, char *local_ip, char *mask, char *gateway,
 	if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
 		log_error("Could not open socket to manage network "
 			  "(err %d - %s)", errno, strerror(errno));
-		return errno;
+		ret = errno;
+		goto done;
 	}
 
 	/* Bring up NIC with correct address  - unless it
@@ -372,7 +402,8 @@ int net_setup_netdev(char *netdev, char *local_ip, char *mask, char *gateway,
 	ret = 0;
 
 done:
-	close(sock);
+	if (sock >= 0)
+		close(sock);
 	if (vlan_id)
 		free(netdev);
 	return ret;

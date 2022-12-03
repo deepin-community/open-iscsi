@@ -27,6 +27,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <arpa/inet.h>
+#include <libopeniscsiusr/libopeniscsiusr.h>
 
 #include "log.h"
 #include "list.h"
@@ -42,6 +43,8 @@
 #include "sysdeps.h"
 #include "iscsi_err.h"
 #include "iscsi_netlink.h"
+
+#define _unwrap(x) (x && strlen(x)) ? x : UNKNOWN_VALUE
 
 /*
  * Default ifaces for use with transports that do not bind to hardware
@@ -90,8 +93,8 @@ static void iface_init(struct iface_rec *iface)
 }
 
 /*
- * default is to use tcp through whatever the network layer
- * selects for us with the /etc/iscsi/initiatorname.iscsi iname.
+ * Default is to use tcp through whatever the network layer
+ * selects for us with the initiatorname.iscsi iname.
  */
 void iface_setup_defaults(struct iface_rec *iface)
 {
@@ -442,25 +445,34 @@ int iface_get_by_net_binding(struct iface_rec *pattern,
 	return ISCSI_ERR_NO_OBJS_FOUND;
 }
 
-int iface_get_iptype(struct iface_rec *iface)
+/*
+ * detect IPv4 vs IPv4 IP address
+ */
+enum iscsi_iface_type iface_get_iptype(struct iface_rec *iface)
 {
+	enum iscsi_iface_type res = ISCSI_IFACE_TYPE_IPV4;
+
 	/* address might not be set if user config with another tool */
 	if (!strlen(iface->ipaddress) ||
 	    !strcmp(UNKNOWN_VALUE, iface->ipaddress)) {
-		/* try to figure out by name */
-		if (strstr(iface->name, "ipv4"))
-			return ISCSI_IFACE_TYPE_IPV4;
-		else if (strstr(iface->name, "ipv6"))
-			return ISCSI_IFACE_TYPE_IPV6;
-		else	/* assume ipv4 by default */
-			return ISCSI_IFACE_TYPE_IPV4;
+		/* unknown or empty IP address: try to figure out by name */
+		if (strstr(iface->name, "ipv6"))
+			res = ISCSI_IFACE_TYPE_IPV6;
 	} else {
+		/* figure out what type of IP address string we have */
 		if (strcmp(iface->bootproto, "dhcp") &&
-		    !strstr(iface->ipaddress, "."))
-			return ISCSI_IFACE_TYPE_IPV6;
-		else
-			return ISCSI_IFACE_TYPE_IPV4;
+		    !strchr(iface->ipaddress, '.')) {
+			/* bootproto is NOT "dhcp", IP addr does NOT have a dot in it */
+			res = ISCSI_IFACE_TYPE_IPV6;
+		}
 	}
+
+	log_debug(8, "iface: ipaddr=\"%s\" name=\"%s\" bootproto=\"%s\" -> %s",
+			iface->ipaddress, iface->name,
+			iface->bootproto,
+			res == ISCSI_IFACE_TYPE_IPV4 ? "IPv4" : "IPv6");
+
+	return res;
 }
 
 static int iface_setup_binding_from_kern_iface(void *data,
@@ -510,7 +522,8 @@ static int iface_setup_binding_from_kern_iface(void *data,
 	return 0;
 }
 
-static int __iface_setup_host_bindings(void *data, struct host_info *hinfo)
+static int __iface_setup_host_bindings(__attribute__((unused))void *data,
+				       struct host_info *hinfo)
 {
 	struct iface_rec *def_iface;
 	struct iscsi_transport *t;
@@ -531,7 +544,7 @@ static int __iface_setup_host_bindings(void *data, struct host_info *hinfo)
 					   &nr_found,
 					   iface_setup_binding_from_kern_iface);
 	if (!nr_found)
-		iface_setup_binding_from_kern_iface(hinfo, NULL);	
+		iface_setup_binding_from_kern_iface(hinfo, NULL);
 	return 0;
 }
 
@@ -547,7 +560,7 @@ void iface_setup_host_bindings(void)
 		return;
 
 	if (access(IFACE_CONFIG_DIR, F_OK) != 0) {
-		if (mkdir(IFACE_CONFIG_DIR, 0660) != 0) {
+		if (mkdir(IFACE_CONFIG_DIR, 0770) != 0) {
 			log_error("Could not make %s. HW/OFFLOAD iscsi "
 				  "may not be supported", IFACE_CONFIG_DIR);
 			idbm_unlock();
@@ -782,40 +795,36 @@ int iface_is_bound_by_ipaddr(struct iface_rec *iface)
 	return 0;
 }
 
-void iface_print(struct iface_rec *iface, char *prefix)
+void iface_print(struct iscsi_iface *iface, char *prefix)
 {
-	if (strlen(iface->name))
-		printf("%sIface Name: %s\n", prefix, iface->name);
-	else
-		printf("%sIface Name: %s\n", prefix, UNKNOWN_VALUE);
+	const char *ipaddress = iscsi_iface_ipaddress_get(iface);
 
-	if (strlen(iface->transport_name))
-		printf("%sIface Transport: %s\n", prefix,
-		      iface->transport_name);
-	else
-		printf("%sIface Transport: %s\n", prefix, UNKNOWN_VALUE);
+	printf("%sIface Name: %s\n", prefix,
+	       (strlen(iscsi_iface_name_get(iface)) > 0) ?
+	       iscsi_iface_name_get(iface) : UNKNOWN_VALUE);
 
-	if (strlen(iface->iname))
-		printf("%sIface Initiatorname: %s\n", prefix, iface->iname);
-	else
-		printf("%sIface Initiatorname: %s\n", prefix, UNKNOWN_VALUE);
+	printf("%sIface Transport: %s\n", prefix,
+	       (strlen(iscsi_iface_transport_name_get(iface)) > 0) ?
+	       iscsi_iface_transport_name_get(iface) : UNKNOWN_VALUE);
 
-	if (!strlen(iface->ipaddress))
+	printf("%sIface Initiatorname: %s\n", prefix,
+	       (strlen(iscsi_iface_iname_get(iface)) > 0) ?
+	       iscsi_iface_iname_get(iface) : UNKNOWN_VALUE);
+
+	if (!strlen(ipaddress))
 		printf("%sIface IPaddress: %s\n", prefix, UNKNOWN_VALUE);
-	else if (strchr(iface->ipaddress, '.'))
-		printf("%sIface IPaddress: %s\n", prefix, iface->ipaddress);
+	else if (strchr(ipaddress, '.'))
+		printf("%sIface IPaddress: %s\n", prefix, ipaddress);
 	else
-		printf("%sIface IPaddress: [%s]\n", prefix, iface->ipaddress);
+		printf("%sIface IPaddress: [%s]\n", prefix, ipaddress);
 
-	if (strlen(iface->hwaddress))
-		printf("%sIface HWaddress: %s\n", prefix, iface->hwaddress);
-	else
-		printf("%sIface HWaddress: %s\n", prefix, UNKNOWN_VALUE);
+	printf("%sIface HWaddress: %s\n", prefix,
+	       (strlen(iscsi_iface_hwaddress_get(iface)) > 0) ?
+	       iscsi_iface_hwaddress_get(iface) : UNKNOWN_VALUE);
 
-	if (strlen(iface->netdev))
-		printf("%sIface Netdev: %s\n", prefix, iface->netdev);
-	else
-		printf("%sIface Netdev: %s\n", prefix, UNKNOWN_VALUE);
+	printf("%sIface Netdev: %s\n", prefix,
+	       (strlen(iscsi_iface_netdev_get(iface)) > 0) ?
+	       iscsi_iface_netdev_get(iface) : UNKNOWN_VALUE);
 }
 
 struct iface_print_node_data {
@@ -842,7 +851,8 @@ static int iface_print_nodes(void *data, node_rec_t *rec)
  * have the binding info. When we store the iface specific node settings
  * in the iface record then it will look different.
  */
-int iface_print_tree(void *data, struct iface_rec *iface)
+int iface_print_tree(__attribute__((unused))void *data,
+		     struct iface_rec *iface)
 {
 	struct node_rec last_rec;
 	struct iface_print_node_data print_data;
@@ -855,21 +865,19 @@ int iface_print_tree(void *data, struct iface_rec *iface)
 	print_data.match_iface = iface;
 	print_data.last_rec = &last_rec;
 
-	idbm_for_each_rec(&num_found, &print_data, iface_print_nodes);
+	idbm_for_each_rec(&num_found, &print_data, iface_print_nodes, false);
 	return 0;
 }
 
-int iface_print_flat(void *data, struct iface_rec *iface)
+void iface_print_flat(struct iscsi_iface *iface)
 {
 	printf("%s %s,%s,%s,%s,%s\n",
-		strlen(iface->name) ? iface->name : UNKNOWN_VALUE,
-		strlen(iface->transport_name) ? iface->transport_name :
-							UNKNOWN_VALUE,
-		strlen(iface->hwaddress) ? iface->hwaddress : UNKNOWN_VALUE,
-		strlen(iface->ipaddress) ? iface->ipaddress : UNKNOWN_VALUE,
-		strlen(iface->netdev) ? iface->netdev : UNKNOWN_VALUE,
-		strlen(iface->iname) ? iface->iname : UNKNOWN_VALUE);
-	return 0;
+	       _unwrap(iscsi_iface_name_get(iface)),
+	       _unwrap(iscsi_iface_transport_name_get(iface)),
+	       _unwrap(iscsi_iface_hwaddress_get(iface)),
+	       _unwrap(iscsi_iface_ipaddress_get(iface)),
+	       _unwrap(iscsi_iface_netdev_get(iface)),
+	       _unwrap(iscsi_iface_iname_get(iface)));
 }
 
 int iface_for_each_iface(void *data, int skip_def, int *nr_found,
@@ -904,6 +912,9 @@ int iface_for_each_iface(void *data, int skip_def, int *nr_found,
 	while ((iface_dent = readdir(iface_dirfd))) {
 		if (!strcmp(iface_dent->d_name, ".") ||
 		    !strcmp(iface_dent->d_name, ".."))
+			continue;
+
+		if (!strcmp(iface_dent->d_name, "iface.example"))
 			continue;
 
 		log_debug(5, "iface_for_each_iface found %s",
@@ -984,6 +995,32 @@ void iface_link_ifaces(struct list_head *ifaces)
 	iface_for_each_iface(ifaces, 1, &nr_found, iface_link);
 }
 
+/*
+ * ipv6 address strings will have at least two colons
+ *
+ * NOTE: does NOT validate the IP address
+ */
+static bool ipaddr_is_ipv6(char *ipaddr)
+{
+	char *first_colon, *second_colon;
+	bool res = false;
+
+	if (ipaddr) {
+		first_colon = strchr(ipaddr, ':');
+		if (first_colon) {
+			second_colon = strchr(first_colon+1, ':');
+			if (second_colon &&
+			    (second_colon != first_colon))
+				res = true;
+		}
+		log_debug(8, "%s(%s) -> %u",
+			__FUNCTION__, ipaddr, res);
+	} else
+		log_debug(8, "%s(nil) -> %u",
+			__FUNCTION__, res);
+	return res;
+}
+
 /**
  * iface_setup_from_boot_context - setup iface from boot context info
  * @iface: iface t setup
@@ -1057,9 +1094,6 @@ int iface_setup_from_boot_context(struct iface_rec *iface,
 	}
 	strcpy(iface->transport_name, t->name);
 
-	memset(iface->name, 0, sizeof(iface->name));
-	snprintf(iface->name, sizeof(iface->name), "%s.%s",
-		 iface->transport_name, context->mac);
 	strlcpy(iface->hwaddress, context->mac,
 		sizeof(iface->hwaddress));
 	strlcpy(iface->ipaddress, context->ipaddr,
@@ -1069,6 +1103,11 @@ int iface_setup_from_boot_context(struct iface_rec *iface,
 		sizeof(iface->subnet_mask));
 	strlcpy(iface->gateway, context->gateway,
 		sizeof(iface->gateway));
+	snprintf(iface->name, sizeof(iface->name), "%s.%s.%s.%u",
+		 iface->transport_name, context->mac,
+		 ipaddr_is_ipv6(iface->ipaddress) ?  "ipv6" : "ipv4",
+		 iface->iface_num);
+
 	log_debug(1, "iface " iface_fmt "", iface_str(iface));
 	return 1;
 }
@@ -1209,7 +1248,7 @@ static void iface_get_common_param_count(struct iface_rec *iface, int *count)
 static int __iface_get_param_count(void *data, struct iface_rec *iface)
 {
 	struct iface_param_count *iface_params = data;
-	int iptype = ISCSI_IFACE_TYPE_IPV4;
+	enum iscsi_iface_type iptype;
 	int count = 0;
 
 	if (strcmp(iface_params->primary->hwaddress, iface->hwaddress))

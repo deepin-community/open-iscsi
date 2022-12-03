@@ -30,6 +30,7 @@
 #define SESSION_USERNAME_IN	"node.session.auth.username_in"
 #define SESSION_PASSWORD_IN	"node.session.auth.password_in"
 #define SESSION_PASSWORD_IN_LEN	"node.session.auth.password_in_length"
+#define SESSION_CHAP_ALGS	"node.session.auth.chap_algs"
 #define SESSION_REPLACEMENT_TMO	"node.session.timeo.replacement_timeout"
 #define SESSION_ABORT_TMO	"node.session.err_timeo.abort_timeout"
 #define SESSION_LU_RESET_TMO	"node.session.err_timeo.lu_reset_timeout"
@@ -45,6 +46,8 @@
 #define SESSION_MAX_CONNS	"node.session.iscsi.MaxConnections"
 #define SESSION_MAX_R2T		"node.session.iscsi.MaxOutstandingR2T"
 #define SESSION_ERL		"node.session.iscsi.ERL"
+#define SESSION_SCAN		"node.session.scan"
+#define SESSION_REOPEN_MAX	"node.session.reopen_max"
 
 /* connections fields */
 #define CONN_ADDR		"node.conn[%d].address"
@@ -73,6 +76,7 @@
 #define IFACE_ISID		"iface.isid"
 #define IFACE_BOOT_PROTO	"iface.bootproto"
 #define IFACE_IPADDR		"iface.ipaddress"
+#define IFACE_PREFIX_LEN	"iface.prefix_len"
 #define IFACE_SUBNET_MASK	"iface.subnet_mask"
 #define IFACE_GATEWAY		"iface.gateway"
 #define IFACE_PRIMARY_DNS	"iface.primary_dns"
