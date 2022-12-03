@@ -25,14 +25,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/time.h>
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include "strings.h"
+#include "local_strings.h"
 #include "types.h"
 #include "iscsi_proto.h"
 #include "initiator.h"
@@ -64,7 +64,7 @@ static char initiator_name[TARGET_NAME_MAXLEN + 1];
 static char initiator_alias[TARGET_NAME_MAXLEN + 1];
 static struct iscsi_ev_context ipc_ev_context;
 
-static int request_initiator_name(void)
+static int request_initiator_name(int tmo)
 {
 	int rc;
 	iscsiadm_req_t req;
@@ -78,7 +78,7 @@ static int request_initiator_name(void)
 	memset(&req, 0, sizeof(req));
 	req.command = MGMT_IPC_CONFIG_INAME;
 
-	rc = iscsid_exec_req(&req, &rsp, 1);
+	rc = iscsid_exec_req(&req, &rsp, 1, tmo);
 	if (rc)
 		return rc;
 
@@ -88,7 +88,7 @@ static int request_initiator_name(void)
 	memset(&req, 0, sizeof(req));
 	req.command = MGMT_IPC_CONFIG_IALIAS;
 
-	rc = iscsid_exec_req(&req, &rsp, 0);
+	rc = iscsid_exec_req(&req, &rsp, 0, tmo);
 	if (rc)
 		/* alias is optional so return ok */
 		return 0;
@@ -136,7 +136,7 @@ int discovery_isns_query(struct discovery_rec *drec, const char *iname,
 	isns_simple_t *qry;
 	isns_client_t *clnt;
 	uint32_t status;
-	int rc, i;
+	int rc;
 
 	isns_config.ic_security = 0;
 	source = isns_source_create_iscsi(iname);
@@ -198,7 +198,7 @@ int discovery_isns_query(struct discovery_rec *drec, const char *iname,
 		goto free_query;
 	}
 
-	for (i = 0; i < objects.iol_count; ++i) {
+	for (unsigned int i = 0; i < objects.iol_count; ++i) {
 		isns_object_t *obj = objects.iol_data[i];
 		const char *pg_tgt = NULL;
 		struct in6_addr in_addr;
@@ -344,7 +344,7 @@ int discovery_isns(void *data, struct iface_rec *iface,
 	if (iface && strlen(iface->iname))
 		iname = iface->iname;
 	else {
-		rc = request_initiator_name();
+		rc = request_initiator_name(drec->iscsid_req_tmo);
 		if (rc) {
 			log_error("Cannot perform discovery. Initiatorname "
 				  "required.");
@@ -378,7 +378,8 @@ retry:
 	return rc;
 }
 
-int discovery_fw(void *data, struct iface_rec *iface,
+int discovery_fw(void *data,
+		 __attribute__((unused))struct iface_rec *iface,
 		 struct list_head *rec_list)
 {
 	struct discovery_rec *drec = data;
@@ -454,7 +455,7 @@ int discovery_offload_sendtargets(int host_no, int do_login,
 	 * and get back the results. We should do this since it would
 	 * allows us to then process the results like software iscsi.
 	 */
-	rc = iscsid_exec_req(&req, &rsp, 1);
+	rc = iscsid_exec_req(&req, &rsp, 1, drec->iscsid_req_tmo);
 	if (rc) {
 		log_error("Could not offload sendtargets to %s.",
 			  drec->address);
@@ -466,8 +467,10 @@ int discovery_offload_sendtargets(int host_no, int do_login,
 }
 
 static int
-iscsi_make_text_pdu(iscsi_session_t *session, struct iscsi_hdr *hdr,
-		    char *data, int max_data_length)
+iscsi_make_text_pdu(iscsi_session_t *session,
+		    struct iscsi_hdr *hdr,
+		    __attribute__((unused))char *data,
+		    __attribute__((unused))int max_data_length)
 {
 	struct iscsi_text *text_pdu = (struct iscsi_text *)hdr;
 
@@ -620,7 +623,7 @@ add_target_record(char *name, char *end, discovery_rec_t *drec,
 
 	/* if no address is provided, use the default */
 	if (text >= end) {
-		if (drec->address == NULL) {
+		if (drec->address[0] == '\0') {
 			log_error("no default address known for target %s",
 				  name);
 			return 0;
@@ -802,7 +805,7 @@ static void iscsi_free_session(struct iscsi_session *session)
 
 static iscsi_session_t *
 iscsi_alloc_session(struct iscsi_sendtargets_config *config,
-		    struct iface_rec *iface, int *rc)
+		    struct iface_rec *iface, int *rc, int tmo)
 {
 	iscsi_session_t *session;
 
@@ -848,7 +851,7 @@ iscsi_alloc_session(struct iscsi_sendtargets_config *config,
 		strcpy(initiator_name, iface->iname);
 		/* MNC TODO add iface alias */
 	} else {
-		*rc = request_initiator_name();
+		*rc = request_initiator_name(tmo);
 		if (*rc) {
 			log_error("Cannot perform discovery. Initiatorname "
 				  "required.");
@@ -866,7 +869,7 @@ iscsi_alloc_session(struct iscsi_sendtargets_config *config,
 	session->initiator_alias = initiator_alias;
 	session->portal_group_tag = PORTAL_GROUP_TAG_UNKNOWN;
 	session->type = ISCSI_SESSION_TYPE_DISCOVERY;
-	session->id = -1;
+	session->id = INVALID_SESSION_ID;
 
 	/* setup authentication variables for the session*/
 	*rc = iscsi_setup_authentication(session, &config->auth);
@@ -1021,7 +1024,7 @@ static void iscsi_destroy_session(struct iscsi_session *session)
 	struct iscsi_conn *conn = &session->conn[0];
 	int rc;
 
-	if (session->id == -1)
+	if (session->id == INVALID_SESSION_ID)
 		return;
 
 	if (!(t->caps & CAP_TEXT_NEGO)) {
@@ -1055,11 +1058,16 @@ static void iscsi_destroy_session(struct iscsi_session *session)
 		log_error("Could not safely destroy session %d (err %d)",
 			  session->id, rc);
 done:
+	if (session->target_alias) {
+	    free(session->target_alias);
+	    session->target_alias = NULL;
+	}
+
 	if (conn->socket_fd >= 0) {
 		ipc->ctldev_close();
 		conn->socket_fd = -1;
 	}
-	session->id = -1;
+	session->id = INVALID_SESSION_ID;
 }
 
 static int iscsi_create_leading_conn(struct iscsi_session *session)
@@ -1181,7 +1189,7 @@ static int iscsi_create_leading_conn(struct iscsi_session *session)
 disconnect:
 	t->template->ep_disconnect(conn);
 
-	if (session->id != -1 &&
+	if (session->id != INVALID_SESSION_ID &&
 	    iscsi_sysfs_session_has_leadconn(session->id)) {
 		if (ipc->destroy_conn(session->t->handle, session->id,
 				       conn->id))
@@ -1189,11 +1197,11 @@ disconnect:
 				  session->id, conn->id);
 	}
 
-	if (session->id != -1) {
+	if (session->id != INVALID_SESSION_ID) {
 		if (ipc->destroy_session(session->t->handle, session->id))
 			log_error("Could not safely destroy session %d",
 				  session->id);
-		session->id = -1;
+		session->id = INVALID_SESSION_ID;
 	}
 
 close_ipc:
@@ -1208,7 +1216,8 @@ close_ipc:
 }
 
 static struct iscsi_ev_context *
-iscsi_ev_context_get(struct iscsi_conn *conn, int ev_size)
+iscsi_ev_context_get(__attribute__((unused))struct iscsi_conn *conn,
+		     int ev_size)
 {
 	log_debug(2, "%s: ev_size %d", __FUNCTION__, ev_size);
 
@@ -1227,7 +1236,8 @@ static void iscsi_ev_context_put(struct iscsi_ev_context *ev_context)
 }
 
 static int iscsi_sched_ev_context(struct iscsi_ev_context *ev_context,
-				  struct iscsi_conn *conn, unsigned long tmo,
+				  struct iscsi_conn *conn,
+				  __attribute__((unused))unsigned long tmo,
 				  int event)
 {
 	if (event == EV_CONN_RECV_PDU || event == EV_CONN_LOGIN) {
@@ -1350,6 +1360,7 @@ reconnect:
 	if (--session->reopen_cnt < 0) {
 		log_error("connection login retries (reopen_max) %d exceeded",
 			  config->reopen_max);
+		rc = ISCSI_ERR_PDU_TIMEOUT;
 		goto login_failed;
 	}
 
@@ -1573,7 +1584,7 @@ int discovery_sendtargets(void *fndata, struct iface_rec *iface,
 	iscsi_timer_clear(&connection_timer);
 
 	/* allocate a new session, and initialize default values */
-	session = iscsi_alloc_session(config, iface, &rc);
+	session = iscsi_alloc_session(config, iface, &rc, drec->iscsid_req_tmo);
 	if (rc)
 		return rc;
 
@@ -1682,7 +1693,7 @@ repoll:
 			rc = process_recvd_pdu(pdu, drec, rec_list,
 					       session, &sendtargets,
 					       &active, &valid_text, data);
-			if (rc == DISCOVERY_NEED_RECONNECT)
+			if (rc == (int)DISCOVERY_NEED_RECONNECT)
 				goto reconnect;
 
 			/* reset timers after receiving a PDU */

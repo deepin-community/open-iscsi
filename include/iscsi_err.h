@@ -4,7 +4,7 @@
 #ifndef _ISCSI_ERR_
 #define _ISCSI_ERR_
 
-enum {
+enum iscsi_error_list {
 	ISCSI_SUCCESS			= 0,
 	/* Generic error */
 	ISCSI_ERR			= 1,
@@ -68,10 +68,16 @@ enum {
 	ISCSI_ERR_UNKNOWN_DISCOVERY_TYPE = 30,
 	/* child process terminated */
 	ISCSI_ERR_CHILD_TERMINATED	= 31,
+	/* session likely not connected */
+	ISCSI_ERR_SESSION_NOT_CONNECTED = 32,
+	/* iscsid request timed out */
+	ISCSI_ERR_REQ_TIMEDOUT = 33,
 
 	/* Always last. Indicates end of error code space */
 	ISCSI_MAX_ERR_VAL,
-} iscsi_err;
+};
+
+extern enum iscsi_error_list iscsi_err;
 
 extern void iscsi_err_print_msg(int err);
 extern char *iscsi_err_to_str(int err);

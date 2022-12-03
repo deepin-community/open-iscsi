@@ -30,6 +30,12 @@
 
 #include "iscsi_proto.h"
 
+/*
+ * NOTE: This file should be kept in sync with the kernel include file
+ * of the same name. In particular, iscsi_param and iscsi_err need
+ * to be in sync.
+ */
+
 #define ISCSI_NL_GRP_ISCSID	1
 #define ISCSI_NL_GRP_UIP	2
 
@@ -341,7 +347,7 @@ struct iscsi_iface_param_info {
 	uint8_t iface_type;	/* IPv4 or IPv6 */
 	uint8_t param_type;	/* iscsi_param_type */
 	uint8_t value[0];	/* length sized value follows */
-} __packed;
+} __attribute__((__packed__));
 
 /*
  * To keep the struct iscsi_uevent size the same for userspace code
@@ -387,8 +393,11 @@ struct iscsi_path {
 #define ISCSI_IPV6_ROUTER_AUTOCFG_ENABLE	0x01
 #define ISCSI_IPV6_ROUTER_AUTOCFG_DISABLE	0x02
 
-#define ISCSI_IFACE_TYPE_IPV4		0x01
-#define ISCSI_IFACE_TYPE_IPV6		0x02
+/* Interface IP Type */
+enum iscsi_iface_type {
+	ISCSI_IFACE_TYPE_IPV4			= 1,
+	ISCSI_IFACE_TYPE_IPV6,
+};
 
 #define ISCSI_MAX_VLAN_ID		4095
 #define ISCSI_MAX_VLAN_PRIORITY		7
@@ -536,6 +545,7 @@ enum iscsi_err {
 	ISCSI_ERR_XMIT_FAILED		= ISCSI_ERR_BASE + 19,
 	ISCSI_ERR_TCP_CONN_CLOSE	= ISCSI_ERR_BASE + 20,
 	ISCSI_ERR_SCSI_EH_SESSION_RST	= ISCSI_ERR_BASE + 21,
+	ISCSI_ERR_NOP_TIMEDOUT		= ISCSI_ERR_BASE + 22,
 };
 
 /*
@@ -627,6 +637,7 @@ enum iscsi_param {
 
 	ISCSI_PARAM_DISCOVERY_PARENT_IDX,
 	ISCSI_PARAM_DISCOVERY_PARENT_TYPE,
+	ISCSI_PARAM_LOCAL_IPADDR,
 	/* must always be last */
 	ISCSI_PARAM_MAX,
 };
@@ -731,6 +742,8 @@ enum iscsi_port_speed {
 	ISCSI_PORT_SPEED_100MBPS	= 0x4,
 	ISCSI_PORT_SPEED_1GBPS		= 0x8,
 	ISCSI_PORT_SPEED_10GBPS		= 0x10,
+	ISCSI_PORT_SPEED_25GBPS         = 0x20,
+	ISCSI_PORT_SPEED_40GBPS         = 0x40,
 };
 
 /* iSCSI port state */
@@ -831,7 +844,7 @@ struct iscsi_stats {
 	 * up to ISCSI_STATS_CUSTOM_MAX
 	 */
 	uint32_t custom_length;
-	struct iscsi_stats_custom custom[0]
+	struct iscsi_stats_custom custom[]
 		__attribute__ ((aligned (sizeof(uint64_t))));
 };
 
@@ -962,7 +975,7 @@ struct iscsi_offload_host_stats {
 	 * up to ISCSI_HOST_STATS_CUSTOM_MAX
 	 */
 	uint32_t custom_length;
-	struct iscsi_host_stats_custom custom[0]
+	struct iscsi_host_stats_custom custom[]
 		 __attribute__ ((aligned (sizeof(uint64_t))));
 };
 

@@ -1,0 +1,17 @@
+etc/iscsi/ifaces/iface.example
+etc/iscsi/initiatorname.iscsi
+etc/logrotate.d/iscsiuiolog
+etc/udev/rules.d/50-iscsi-firmware-login.rules
+sbin/iscsi-gen-initiatorname
+sbin/iscsi_fw_login
+sbin/iscsi_offload
+usr/lib/systemd/system-generators/ibft-rule-generator
+usr/lib/systemd/system/iscsi-init.service
+usr/lib/systemd/system/iscsi.service
+usr/lib/systemd/system/iscsid.service
+usr/lib/systemd/system/iscsiuio.service
+usr/lib/systemd/system/iscsiuio.socket
+usr/lib/${DEB_HOST_MULTIARCH}/libopeniscsiusr.so
+usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/libopeniscsiusr.pc
+usr/sbin/brcm_iscsiuio
+usr/share/man/man8/iscsi_fw_login.8

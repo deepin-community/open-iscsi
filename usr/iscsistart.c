@@ -27,9 +27,9 @@
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
+#include <time.h>
 #include <sys/mman.h>
 #include <sys/utsname.h>
-#include <sys/signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
@@ -61,11 +61,13 @@ static LIST_HEAD(targets);
 static LIST_HEAD(user_params);
 
 static char program_name[] = "iscsistart";
+static char config_file[TARGET_NAME_MAXLEN];
 
 /* used by initiator */
 extern struct iscsi_ipc *ipc;
 
 static struct option const long_options[] = {
+	{"config", required_argument, NULL, 'c'},
 	{"initiatorname", required_argument, NULL, 'i'},
 	{"targetname", required_argument, NULL, 't'},
 	{"tgpt", required_argument, NULL, 'g'},
@@ -94,6 +96,7 @@ static void usage(int status)
 		printf("Usage: %s [OPTION]\n", program_name);
 		printf("\
 Open-iSCSI initiator.\n\
+  -c, --config=[path]      set config file (default " CONFIG_FILE ").\n\
   -i, --initiatorname=name set InitiatorName to name (Required)\n\
   -t, --targetname=name    set TargetName to name (Required)\n\
   -g, --tgpt=N             set target portal group tag to N (Required)\n\
@@ -123,7 +126,7 @@ static int stop_event_loop(void)
 
 	memset(&req, 0, sizeof(req));
 	req.command = MGMT_IPC_IMMEDIATE_STOP;
-	rc = iscsid_exec_req(&req, &rsp, 0);
+	rc = iscsid_exec_req(&req, &rsp, 0, -1);
 	if (rc) {
 		iscsi_err_print_msg(rc);
 		log_error("Could not stop event_loop");
@@ -140,6 +143,7 @@ static int apply_params(struct node_rec *rec)
 	rec->session.initial_login_retry_max = -1;
 	rec->conn[0].timeo.noop_out_interval = -1;
 	rec->conn[0].timeo.noop_out_timeout = -1;
+	rec->session.scan = -1;
 
 	list_for_each_entry(param, &user_params, list) {
 		/*
@@ -183,6 +187,8 @@ static int apply_params(struct node_rec *rec)
 		rec->conn[0].timeo.noop_out_interval = 0;
 	if (rec->conn[0].timeo.noop_out_timeout == -1)
 		rec->conn[0].timeo.noop_out_timeout = 0;
+	if (rec->session.scan == -1)
+		rec->session.scan = DEF_INITIAL_SCAN;
 
 	return 0;
 }
@@ -221,7 +227,8 @@ static int login_session(struct node_rec *rec)
 {
 	iscsiadm_req_t req;
 	iscsiadm_rsp_t rsp;
-	int rc, retries = 0;
+	int rc, msec, err;
+	struct timespec ts;
 
 	rc = apply_params(rec);
 	if (rc)
@@ -234,19 +241,41 @@ static int login_session(struct node_rec *rec)
 	req.command = MGMT_IPC_SESSION_LOGIN;
 	memcpy(&req.u.session.rec, rec, sizeof(*rec));
 
-retry:
-	rc = iscsid_exec_req(&req, &rsp, 0);
 	/*
-	 * handle race where iscsid proc is starting up while we are
-	 * trying to connect.
+	 * Need to handle race where iscsid proc is starting up while we are
+	 * trying to connect. Retry with exponential backoff, start from 50 ms.
 	 */
-	if (rc == ISCSI_ERR_ISCSID_NOTCONN && retries < 30) {
-		retries++;
-		sleep(1);
-		goto retry;
-	} else if (rc)
-		iscsi_err_print_msg(rc);
+	for (msec = 50; msec <= 15000; msec <<= 1) {
+		/*
+		 * Once our event loop is up then we want to wait for the login
+		 * response. Either it logs in, we hit the login retries count,
+		 * or this program crashes, so there no need for the response
+		 * timeout.
+		 */
+		rc = iscsid_exec_req(&req, &rsp, 0, -1);
+		if (rc == 0) {
+			return rc;
+		} else if (rc == ISCSI_ERR_ISCSID_NOTCONN) {
+			ts.tv_sec = msec / 1000;
+			ts.tv_nsec = (msec % 1000) * 1000000L;
+
+			/* On EINTR, retry nanosleep with remaining time. */
+			while ((err = nanosleep(&ts, &ts)) < 0 &&
+			       errno == EINTR);
+			if (err < 0)
+				break;
+		} else {
+			break;
+		}
+	}
+
+	iscsi_err_print_msg(rc);
 	return rc;
+}
+
+static char *get_config_file(void)
+{
+	return config_file;
 }
 
 static int setup_session(void)
@@ -256,6 +285,13 @@ static int setup_session(void)
 
 	if (list_empty(&targets))
 		return login_session(&config_rec);
+
+	increase_max_files();
+	if (idbm_init(get_config_file)) {
+		log_warning("exiting due to idbm configuration error");
+		rc = ISCSI_ERR_IDBM;
+		goto out;
+	}
 
 	list_for_each_entry(context, &targets, list) {
 		struct node_rec *rec;
@@ -276,10 +312,14 @@ static int setup_session(void)
 		free(rec);
 	}
 	fw_free_targets(&targets);
+out:
 	return rc;
 }
 
-int session_in_use(int sid) { return 0; }
+int session_in_use(__attribute__((unused))int sid)
+{
+	return 0;
+}
 
 static void catch_signal(int signo)
 {
@@ -329,9 +369,11 @@ int main(int argc, char *argv[])
 	struct boot_context *context, boot_context;
 	struct sigaction sa_old;
 	struct sigaction sa_new;
+	struct user_param *param, *tmp_param;
 	int control_fd, mgmt_ipc_fd, err;
 	pid_t pid;
 
+	strcpy(config_file, CONFIG_FILE);
 	idbm_node_setup_defaults(&config_rec);
 	config_rec.name[0] = '\0';
 	config_rec.conn[0].address[0] = '\0';
@@ -348,9 +390,13 @@ int main(int argc, char *argv[])
 
 	sysfs_init();
 
-	while ((ch = getopt_long(argc, argv, "P:i:t:g:a:p:d:u:w:U:W:bNfvh",
+	while ((ch = getopt_long(argc, argv, "c:P:i:t:g:a:p:d:u:w:U:W:bNfvh",
 				 long_options, &longindex)) >= 0) {
 		switch (ch) {
+		case 'c':
+			strncpy(config_file, optarg, TARGET_NAME_MAXLEN);
+			config_file[TARGET_NAME_MAXLEN-1] = 0;
+			break;
 		case 'i':
 			initiatorname = optarg;
 			break;
@@ -455,6 +501,10 @@ int main(int argc, char *argv[])
 	} else if (pid) {
 		int status, rc, rc2;
 
+		/* make a special socket path for only this iscsistart instance */
+		iscsid_set_namespace(pid);
+		sleep(1);
+
 		rc = setup_session();
 		rc2 = stop_event_loop();
 		/*
@@ -471,6 +521,9 @@ int main(int argc, char *argv[])
 		log_debug(1, "iscsi parent done");
 		exit(0);
 	}
+
+	pid = getpid();
+	iscsid_set_namespace(pid);
 
 	mgmt_ipc_fd = mgmt_ipc_listen();
 	if (mgmt_ipc_fd  < 0) {
@@ -495,6 +548,8 @@ int main(int argc, char *argv[])
 	log_debug(1, "TPGT=%d", config_rec.tpgt);
 	log_debug(1, "IP Address=%s", config_rec.conn[0].address);
 
+	ipc->auth_type = ISCSI_IPC_AUTH_UID;
+
 	/* log the version, so that we can tell if the daemon and kernel module
 	 * match based on what shows up in the syslog.  Tarballs releases
 	 * always install both, but Linux distributors may put the kernel module
@@ -516,6 +571,10 @@ int main(int argc, char *argv[])
 	mgmt_ipc_close(mgmt_ipc_fd);
 	free_initiator();
 	sysfs_cleanup();
+	list_for_each_entry_safe(param, tmp_param, &user_params, list) {
+		list_del(&param->list);
+		idbm_free_user_param(param);
+	}
 
 	log_debug(1, "iscsi child done");
 	return 0;

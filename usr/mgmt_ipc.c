@@ -26,6 +26,8 @@
 #include <unistd.h>
 #include <pwd.h>
 #include <sys/un.h>
+#include <string.h>
+#include <stdbool.h>
 
 #include "iscsid.h"
 #include "idbm.h"
@@ -37,6 +39,7 @@
 #include "iscsi_ipc.h"
 #include "iscsi_err.h"
 #include "iscsi_util.h"
+#include "iscsid_req.h"
 
 #define PEERUSER_MAX	64
 #define EXTMSG_MAX	(64 * 1024)
@@ -60,7 +63,7 @@ mgmt_ipc_listen(void)
 		return fd;
 	}
 
-	addr_len = setup_abstract_addr(&addr, ISCSIADM_NAMESPACE);
+	addr_len = setup_abstract_addr(&addr, iscsid_namespace);
 
 	if ((err = bind(fd, (struct sockaddr *) &addr, addr_len)) < 0 ) {
 		log_error("Can not bind IPC socket");
@@ -83,7 +86,7 @@ int mgmt_ipc_systemd(void)
 
 	env = getenv("LISTEN_PID");
 
-	if (!env || (strtoul(env, NULL, 10) != getpid()))
+	if (!env || ((pid_t)strtoul(env, NULL, 10) != getpid()))
 		return -EINVAL;
 
 	env = getenv("LISTEN_FDS");
@@ -210,7 +213,7 @@ mgmt_ipc_cfg_filename(queue_task_t *qtask)
 }
 
 static int
-mgmt_ipc_conn_add(queue_task_t *qtask)
+mgmt_ipc_conn_add(__attribute__((unused))queue_task_t *qtask)
 {
 	return ISCSI_ERR;
 }
@@ -223,7 +226,7 @@ mgmt_ipc_immediate_stop(queue_task_t *qtask)
 }
 
 static int
-mgmt_ipc_conn_remove(queue_task_t *qtask)
+mgmt_ipc_conn_remove(__attribute__((unused))queue_task_t *qtask)
 {
 	return ISCSI_ERR;
 }
@@ -299,25 +302,29 @@ mgmt_ipc_notify_common(queue_task_t *qtask, int (*handler)(int, char **))
 /* Replace these dummies as you implement them
    elsewhere */
 static int
-iscsi_discovery_add_node(int argc, char **argv)
+iscsi_discovery_add_node(__attribute__((unused))int argc,
+			 __attribute__((unused))char **argv)
 {
 	return ISCSI_SUCCESS;
 }
 
 static int
-iscsi_discovery_del_node(int argc, char **argv)
+iscsi_discovery_del_node(__attribute__((unused))int argc,
+			 __attribute__((unused))char **argv)
 {
 	return ISCSI_SUCCESS;
 }
 
 static int
-iscsi_discovery_add_portal(int argc, char **argv)
+iscsi_discovery_add_portal(__attribute__((unused))int argc,
+			   __attribute__((unused))char **argv)
 {
 	return ISCSI_SUCCESS;
 }
 
 static int
-iscsi_discovery_del_portal(int argc, char **argv)
+iscsi_discovery_del_portal(__attribute__((unused))int argc,
+			   __attribute__((unused))char **argv)
 {
 	return ISCSI_SUCCESS;
 }
@@ -349,7 +356,6 @@ mgmt_ipc_notify_del_portal(queue_task_t *qtask)
 static int
 mgmt_peeruser(int sock, char *user)
 {
-#if defined(SO_PEERCRED)
 	/* Linux style: use getsockopt(SO_PEERCRED) */
 	struct ucred peercred;
 	socklen_t so_len = sizeof(peercred);
@@ -372,62 +378,32 @@ mgmt_peeruser(int sock, char *user)
 
 	strlcpy(user, pass->pw_name, PEERUSER_MAX);
 	return 1;
+}
 
-#elif defined(SCM_CREDS)
-	struct msghdr msg;
-	typedef struct cmsgcred Cred;
-#define cruid cmcred_uid
-	Cred *cred;
+static bool
+mgmt_authorized_uid(int sock)
+{
+	int authorized = false;
+	struct ucred peercred = {0};
+	socklen_t so_len = sizeof(peercred);
 
-	/* Compute size without padding */
-	/* for NetBSD */
-	char cmsgmem[_ALIGN(sizeof(struct cmsghdr)) + _ALIGN(sizeof(Cred))];
-
-	/* Point to start of first structure */
-	struct cmsghdr *cmsg = (struct cmsghdr *) cmsgmem;
-
-	struct iovec iov;
-	char buf;
-	struct passwd *pw;
-
-	memset(&msg, 0, sizeof(msg));
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = (char *) cmsg;
-	msg.msg_controllen = sizeof(cmsgmem);
-	memset(cmsg, 0, sizeof(cmsgmem));
-
-	/*
-	 * The one character which is received here is not meaningful; its
-	 * purposes is only to make sure that recvmsg() blocks long enough for
-	 * the other side to send its credentials.
-	 */
-	iov.iov_base = &buf;
-	iov.iov_len = 1;
-
-	if (recvmsg(sock, &msg, 0) < 0 || cmsg->cmsg_len < sizeof(cmsgmem) ||
-			cmsg->cmsg_type != SCM_CREDS) {
-		log_error("ident_unix: error receiving credentials: %m");
-		return 0;
+	errno = 0;
+	if (getsockopt(sock, SOL_SOCKET, SO_PEERCRED, &peercred,
+		&so_len) != 0 || so_len != sizeof(peercred)) {
+		/* We didn't get a valid credentials struct. */
+		log_error("Error receiving credentials: %m");
+		goto ret_auth;
 	}
 
-	cred = (Cred *) CMSG_DATA(cmsg);
+	/* Only UID==0 is authorized */
+	authorized = peercred.uid ? false: true;
 
-	pw = getpwuid(cred->cruid);
-	if (pw == NULL) {
-		log_error("ident_unix: unknown local user with uid %d",
-				(int) cred->cruid);
-		return 0;
+	if (!authorized) {
+		log_error("Unauthorized user with UID=%u", peercred.uid);
 	}
 
-	strlcpy(user, pw->pw_name, PEERUSER_MAX);
-	return 1;
-
-#else
-	log_error("'mgmg_ipc' auth is not supported on local connections "
-		"on this platform");
-	return 0;
-#endif
+ret_auth:
+	return authorized;
 }
 
 static void
@@ -462,8 +438,12 @@ mgmt_ipc_write_rsp(queue_task_t *qtask, int err)
 	}
 
 	qtask->rsp.err = err;
-	if (write(qtask->mgmt_ipc_fd, &qtask->rsp, sizeof(qtask->rsp)) < 0)
-		log_error("IPC qtask write failed: %s", strerror(errno));
+	if (write(qtask->mgmt_ipc_fd, &qtask->rsp, sizeof(qtask->rsp)) < 0) {
+		if (qtask->conn && qtask->conn->session)
+			conn_error(qtask->conn, "IPC qtask write failed: %s", strerror(errno));
+		else
+			log_error("IPC qtask write failed: %s", strerror(errno));
+	}
 	mgmt_ipc_destroy_queue_task(qtask);
 }
 
@@ -504,8 +484,11 @@ mgmt_ipc_read_req(queue_task_t *qtask)
 		/* Remember the allocated pointer in the
 		 * qtask - it will be freed by write_rsp.
 		 * Note: we allocate one byte in excess
-		 * so we can append a NUL byte. */
+		 * so we can append a NULL byte. */
 		qtask->payload = malloc(req->payload_len + 1);
+		if (!qtask->payload)
+			return -ENOMEM;
+
 		rc = mgmt_ipc_read_data(qtask->mgmt_ipc_fd,
 				qtask->payload,
 				req->payload_len);
@@ -532,7 +515,7 @@ static mgmt_ipc_fn_t *	mgmt_ipc_functions[__MGMT_IPC_MAX_COMMAND] = {
 [MGMT_IPC_NOTIFY_DEL_PORTAL]	= mgmt_ipc_notify_del_portal,
 };
 
-void mgmt_ipc_handle(int accept_fd)
+static void mgmt_ipc_handle_check_auth(int accept_fd, bool auth_uid_only)
 {
 	unsigned int command;
 	int fd, err;
@@ -552,9 +535,16 @@ void mgmt_ipc_handle(int accept_fd)
 	qtask->allocated = 1;
 	qtask->mgmt_ipc_fd = fd;
 
-	if (!mgmt_peeruser(fd, user) || strncmp(user, "root", PEERUSER_MAX)) {
-		err = ISCSI_ERR_ACCESS;
-		goto err;
+	if (auth_uid_only) {
+		if (!mgmt_authorized_uid(fd)) {
+			err = ISCSI_ERR_ACCESS;
+			goto err;
+		}
+	} else {
+		if (!mgmt_peeruser(fd, user) || strncmp(user, "root", PEERUSER_MAX)) {
+			err = ISCSI_ERR_ACCESS;
+			goto err;
+		}
 	}
 
 	if (mgmt_ipc_read_req(qtask) < 0) {
@@ -565,8 +555,10 @@ void mgmt_ipc_handle(int accept_fd)
 	command = qtask->req.command;
 	qtask->rsp.command = command;
 
-	if (0 <= command && command < __MGMT_IPC_MAX_COMMAND)
+	if (command > 0 &&
+	    command < __MGMT_IPC_MAX_COMMAND)
 		handler = mgmt_ipc_functions[command];
+
 	if (handler != NULL) {
 		/* If the handler returns OK, this means it
 		 * already sent the reply. */
@@ -583,4 +575,16 @@ err:
 	/* This will send the response, close the
 	 * connection and free the qtask */
 	mgmt_ipc_write_rsp(qtask, err);
+}
+
+void mgmt_ipc_handle(int accept_fd)
+{
+	/* Default behavior. Full auth check. */
+	mgmt_ipc_handle_check_auth(accept_fd, false);
+}
+
+void mgmt_ipc_handle_uid_only(int accept_fd)
+{
+	/* Check only originating UID. */
+	mgmt_ipc_handle_check_auth(accept_fd, true);
 }

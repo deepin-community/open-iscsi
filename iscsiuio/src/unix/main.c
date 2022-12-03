@@ -48,6 +48,10 @@
 #include <net/ethernet.h>
 #include <arpa/inet.h>
 #include <sys/mman.h>
+#ifndef	NO_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
+#include <assert.h>
 
 #include "uip.h"
 #include "uip_arp.h"
@@ -76,16 +80,18 @@
  ******************************************************************************/
 #define PFX "main "
 
-static const char default_pid_filepath[] = "/var/run/iscsiuio.pid";
+static const char default_pid_filepath[] = "/run/iscsiuio.pid";
 
 /*******************************************************************************
  *  Global Variables
  ******************************************************************************/
 static const struct option long_options[] = {
-	{"debug", 0, 0, 0},
-	{"version", 0, 0, 0},
-	{"help", 0, 0, 0},
-	{0, 0, 0, 0}
+	{"foreground", no_argument, NULL, 'f'},
+	{"debug", required_argument, NULL, 'd'},
+	{"pid", required_argument, NULL, 'p'},
+	{"version", no_argument, NULL, 'v'},
+	{"help", no_argument, NULL, 'h'},
+	{NULL, no_argument, NULL, 0}
 };
 
 struct options opt = {
@@ -144,7 +150,7 @@ signal_wait:
 		fini_logger(SHUTDOWN_LOGGER);
 		rc = init_logger(main_log.log_file);
 		if (rc != 0)
-			printf("Could not initialize the logger in "
+			fprintf(stderr, "WARN: Could not initialize the logger in "
 			       "signal!\n");
 		goto signal_wait;
 	default:
@@ -172,7 +178,7 @@ static void main_usage()
 	printf("iscsiuio daemon.\n"
 	       "-f, --foreground        make the program run in the foreground\n"
 	       "-d, --debug debuglevel  print debugging information\n"
-	       "-p, --pid=pidfile       use pid file (default  %s).\n"
+	       "-p, --pid pidfile       use pid file (default  %s).\n"
 	       "-h, --help              display this help and exit\n"
 	       "-v, --version           display version and exit\n",
 	       default_pid_filepath);
@@ -181,16 +187,18 @@ static void main_usage()
 static void daemon_init()
 {
 	int fd;
+	int res;
 
 	fd = open("/dev/null", O_RDWR);
-	if (fd == -1)
-		exit(-1);
+	assert(fd >= 0);
 
 	dup2(fd, 0);
 	dup2(fd, 1);
 	dup2(fd, 2);
 	setsid();
-	chdir("/");
+	res = chdir("/");
+	assert(res == 0);
+	close(fd);
 }
 
 #define ISCSI_OOM_PATH_LEN 48
@@ -237,6 +245,7 @@ int main(int argc, char *argv[])
 	int foreground = 0;
 	pid_t pid;
 	pthread_attr_t attr;
+	int pipefds[2];
 
 	/*  Record the start time for the user space daemon */
 	opt.start_time = time(NULL);
@@ -279,7 +288,7 @@ int main(int argc, char *argv[])
 		/*  initialize the logger */
 		rc = init_logger(main_log.log_file);
 		if (rc != 0 && opt.debug == DEBUG_ON)
-			printf("WARN: Could not initialize the logger\n");
+			fprintf(stderr, "WARN: Could not initialize the logger\n");
 	}
 
 	LOG_INFO("Started iSCSI uio stack: Ver " PACKAGE_VERSION);
@@ -314,38 +323,56 @@ int main(int argc, char *argv[])
 
 		fd = open(pid_file, O_WRONLY | O_CREAT, 0644);
 		if (fd < 0) {
-			printf("Unable to create pid file: %s", pid_file);
+			fprintf(stderr, "ERR: Unable to create pid file: %s\n",
+				pid_file);
+			exit(1);
+		}
+
+		if (pipe(pipefds) < 0) {
+			fprintf(stderr, "ERR: Unable to create a PIPE: %s\n",
+				strerror(errno));
 			exit(1);
 		}
 
 		pid = fork();
 		if (pid < 0) {
-			printf("Starting daemon failed");
+			fprintf(stderr, "ERR: Starting daemon failed\n");
 			exit(1);
 		} else if (pid) {
+			char msgbuf[4];
+			int res;
+
+			/* parent: wait for child msg then exit */
+			close(pipefds[1]);	/* close unused end */
+			res = read(pipefds[0], msgbuf, sizeof(msgbuf));
+			assert(res > 0);
 			exit(0);
 		}
 
+		/* the child */
 		rc = chdir("/");
 		if (rc == -1)
-			printf("Unable to chdir(\") [%s]", strerror(errno));
+			fprintf(stderr, "WARN: Unable to chdir(\") [%s]\n", strerror(errno));
 
 		if (lockf(fd, F_TLOCK, 0) < 0) {
-			printf("Unable to lock pid file: %s [%s]",
+			fprintf(stderr, "ERR: Unable to lock pid file: %s [%s]\n",
 			       pid_file, strerror(errno));
 			exit(1);
 		}
 
 		rc = ftruncate(fd, 0);
 		if (rc == -1)
-			printf("ftruncate(%d, 0) failed [%s]",
+			fprintf(stderr, "WARN: ftruncate(%d, 0) failed [%s]\n",
 			       fd, strerror(errno));
 
 		sprintf(buf, "%d\n", getpid());
 		written_bytes = write(fd, buf, strlen(buf));
-		if (written_bytes == -1)
-			printf("Could not write lock file [%s]",
+		if (written_bytes == -1) {
+			fprintf(stderr, "ERR: Could not write pid file [%s]\n",
 			       strerror(errno));
+			exit(1);
+		}
+		close(fd);
 
 		daemon_init();
 	}
@@ -390,8 +417,24 @@ int main(int argc, char *argv[])
 	if (rc != 0)
 		goto error;
 
+	if (!foreground) {
+		int res;
+
+		/* signal parent they can go away now */
+		close(pipefds[0]);	/* close unused end */
+		res = write(pipefds[1], "ok\n", 3);
+		assert(res > 0);
+		close(pipefds[1]);
+	}
+
+#ifndef	NO_SYSTEMD
+	sd_notify(0, "READY=1\n"
+		     "STATUS=Ready to process requests\n");
+#endif
+
 	/*  NetLink connection to listen to NETLINK_ISCSI private messages */
-	nic_nl_open();
+	if (nic_nl_open() != 0)
+		goto error;
 
 error:
 	cleanup();

@@ -53,7 +53,7 @@ struct iscsi_session *session_find_by_sid(uint32_t sid)
 	return NULL;
 }
 
-const static unsigned int align_32_down(unsigned int param)
+static unsigned int align_32_down(unsigned int param)
 {
 	return param & ~0x3;
 }
@@ -93,6 +93,8 @@ int iscsi_setup_authentication(struct iscsi_session *session,
 	     auth_cfg->password_in_length))
 		memcpy(session->password_in, auth_cfg->password_in,
 		       session->password_in_length);
+
+	memcpy(session->chap_algs, auth_cfg->chap_algs, sizeof(auth_cfg->chap_algs));
 
 	if (session->password_length || session->password_in_length) {
 		/* setup the auth buffers */
@@ -173,6 +175,7 @@ iscsi_copy_operational_params(struct iscsi_conn *conn,
 
 	/* session's operational parameters */
 	session->initial_r2t_en = session_conf->InitialR2T;
+	session->max_r2t = session_conf->MaxOutstandingR2T;
 	session->imm_data_en = session_conf->ImmediateData;
 	session->first_burst = align_32_down(session_conf->FirstBurstLength);
 	/*
@@ -270,12 +273,10 @@ static int host_set_param(struct iscsi_transport *t,
 
 static void print_param_value(enum iscsi_param param, void *value, int type)
 {
-	log_debug(3, "set operational parameter %d to:", param);
-
 	if (type == ISCSI_STRING)
-		log_debug(3, "%s", value ? (char *)value : "NULL");
+		log_debug(3, "set operational parameter %d to %s", param, value ? (char *)value : "NULL");
 	else
-		log_debug(3, "%u", *(uint32_t *)value);
+		log_debug(3, "set operational parameter %d to %u", param, *(uint32_t *)value);
 }
 
 #define MAX_HOST_PARAMS 2
@@ -341,7 +342,7 @@ int iscsi_session_set_neg_params(struct iscsi_conn *conn)
 {
 	struct iscsi_session *session = conn->session;
 	int i, rc;
-	uint32_t one = 1, zero = 0;
+	uint32_t zero = 0;
 	struct connparam {
 		int param;
 		int type;
@@ -375,7 +376,7 @@ int iscsi_session_set_neg_params(struct iscsi_conn *conn)
 			.conn_only = 0,
 		}, {
 			.param = ISCSI_PARAM_MAX_R2T,
-			.value = &one, /* FIXME: session->max_r2t */
+			.value = &session->max_r2t,
 			.type = ISCSI_INT,
 			.conn_only = 0,
 		}, {
@@ -700,7 +701,7 @@ int iscsi_host_set_net_params(struct iface_rec *iface,
 		netdev = hinfo.iface.netdev;
 	}
 
-	if (net_ifup_netdev(netdev))
+	if (!t->template->no_netdev && net_ifup_netdev(netdev))
 		log_warning("Could not brining up netdev %s. Try running "
 			    "'ifup %s' first if login fails.", netdev, netdev);
 

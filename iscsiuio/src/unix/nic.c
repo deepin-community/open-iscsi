@@ -65,6 +65,7 @@
 
 #include "bnx2.h"
 #include "bnx2x.h"
+#include "qedi.h"
 #include "ipv6.h"
 
 /******************************************************************************
@@ -180,7 +181,7 @@ error:
 }
 
 static struct nic_ops *(*nic_get_ops[]) () = {
-bnx2_get_ops, bnx2x_get_ops,};
+bnx2_get_ops, bnx2x_get_ops, qedi_get_ops};
 
 int load_all_nic_libraries()
 {
@@ -404,6 +405,7 @@ nic_t *nic_init()
 	memset(nic, 0, sizeof(*nic));
 	nic->uio_minor = -1;
 	nic->fd = INVALID_FD;
+	nic->host_no = INVALID_HOST_NO;
 	nic->next = NULL;
 	nic->thread = INVALID_THREAD;
 	nic->enable_thread = INVALID_THREAD;
@@ -797,7 +799,12 @@ int nic_process_intr(nic_t *nic, int discard_check)
 
 		nic->intr_count = count;
 
-		(*nic->ops->clear_tx_intr) (nic);
+		if (strcmp(nic->ops->description, "qedi")) {
+			LOG_DEBUG(PFX "%s: host:%d - calling clear_tx_intr from process_intr",
+			          nic->log_name, nic->host_no);
+			(*nic->ops->clear_tx_intr) (nic);
+		}
+
 		ret = 1;
 	}
 	pthread_mutex_unlock(&nic->nic_mutex);
@@ -1034,9 +1041,11 @@ int process_packets(nic_t *nic,
 		case UIP_ETHTYPE_IPv4:
 		case UIP_ETHTYPE_ARP:
 			af_type = AF_INET;
+			LOG_DEBUG(PFX "%s: ARP or IPv4 vlan:0x%x ethertype:0x%x",
+				   nic->log_name, vlan_id, type);
 			break;
 		default:
-			LOG_PACKET(PFX "%s: Ignoring vlan:0x%x ethertype:0x%x",
+			LOG_DEBUG(PFX "%s: Ignoring vlan:0x%x ethertype:0x%x",
 				   nic->log_name, vlan_id, type);
 			goto done;
 		}
@@ -1062,7 +1071,7 @@ int process_packets(nic_t *nic,
 		if (nic_iface == NULL) {
 			/* Matching nic_iface not found */
 			pthread_mutex_unlock(&nic->nic_mutex);
-			LOG_PACKET(PFX "%s: Couldn't find interface for "
+			LOG_DEBUG(PFX "%s: Couldn't find interface for "
 				   "VLAN: %d af_type %d",
 				nic->log_name, vlan_id, af_type);
 			rc = EINVAL;  /* Return the +error code */
@@ -1070,6 +1079,8 @@ int process_packets(nic_t *nic,
 		}
 nic_iface_present:
 		pkt->nic_iface = nic_iface;
+		LOG_DEBUG(PFX "%s: found nic iface, type=0x%x, bufsize=%d",
+			  nic->log_name, type, pkt->buf_size);
 
 		ustack = &nic_iface->ustack;
 
@@ -1111,9 +1122,12 @@ nic_iface_present:
 			 * network, the global variable uip_len is
 			 * set to a value > 0. */
 			if (ustack->uip_len > 0) {
+				pkt->buf_size = ustack->uip_len;
 				prepare_ipv4_packet(nic, nic_iface,
 						    ustack, pkt);
 
+				LOG_DEBUG(PFX "%s: write called after arp_ipin, uip_len=%d",
+					  nic->log_name, ustack->uip_len);
 				(*nic->ops->write) (nic, nic_iface, pkt);
 			}
 
@@ -1125,8 +1139,12 @@ nic_iface_present:
 			 * in data that should be sent out on the
 			 * network, the global variable uip_len
 			 * is set to a value > 0. */
-			if (pkt->buf_size > 0)
+			if (pkt->buf_size > 0) {
+				pkt->buf_size = ustack->uip_len;
+				LOG_DEBUG(PFX "%s: write called after arp_arpin, bufsize=%d",
+					   nic->log_name, pkt->buf_size);
 				(*nic->ops->write) (nic, nic_iface, pkt);
+			}
 			break;
 		}
 		ustack->uip_len = 0;
@@ -1300,21 +1318,6 @@ static int do_acquisition(nic_t *nic, nic_interface_t *nic_iface,
 			/* For DHCPv4 failure, the ustack must be cleaned so
 			   it can re-acquire on the next iscsid request */
 			uip_reset(&nic_iface->ustack);
-
-			/*  Signal that the device enable is
-			    done */
-			pthread_cond_broadcast(&nic->enable_done_cond);
-			pthread_mutex_unlock(&nic->nic_mutex);
-
-			if (nic->enable_thread == INVALID_THREAD)
-				goto dhcp_err;
-
-			rc = pthread_cancel(nic->enable_thread);
-			if (rc != 0)
-				LOG_ERR(PFX "%s: Couldn't cancel "
-					"enable nic thread", nic->log_name);
-dhcp_err:
-			pthread_mutex_lock(&nic->nic_mutex);
 			goto error;
 		}
 

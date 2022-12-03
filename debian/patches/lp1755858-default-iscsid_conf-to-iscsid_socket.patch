@@ -1,0 +1,27 @@
+Description: default in iscid.conf to use iscsid.socket
+
+People do not want iscsid to run if not needed.
+To do so it is configured to be socket activated.
+Internally iscsid code has a fallback if the service is missing to run the
+command specified in iscsid.conf as "iscsid.startup".
+Set this to ensure the socket is active instead of calling the binary, which
+would not be what we want anyway as it would not be from the .service context.
+
+Author: Christian Ehrhardt <christian.ehrhardt@canonical.com>
+Bug-Ubuntu: https://bugs.launchpad.net/bugs/1755858
+Reviewed-by: Rafael David Tinoco <rafaeldtinoco@ubuntu.com>
+Last-Update: 2020-08-13
+
+Index: open-iscsi/etc/iscsid.conf
+===================================================================
+--- open-iscsi.orig/etc/iscsid.conf
++++ open-iscsi/etc/iscsid.conf
+@@ -22,7 +22,7 @@
+ # iscsid.startup = /bin/systemctl start iscsid.socket iscsiuio.socket
+ #
+ # Default for Debian and Ubuntu. Uncomment to activate.
+-# iscsid.startup = /bin/systemctl start iscsid.socket
++iscsid.startup = /bin/systemctl start iscsid.socket
+ #
+ # Default if you are not using systemd. Uncomment to activate.
+ # iscsid.startup = /usr/bin/service start iscsid

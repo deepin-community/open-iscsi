@@ -23,7 +23,7 @@
  */
 #include <stdlib.h>
 #include <errno.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/signalfd.h>
@@ -41,6 +41,10 @@
 
 static unsigned int reap_count;
 
+/* track pid of reload fork, while running */
+static pid_t reload_pid = 0;
+static void (*reload_callback)(void);
+
 #define REAP_WAKEUP 1000 /* in millisecs */
 
 void reap_inc(void)
@@ -48,9 +52,18 @@ void reap_inc(void)
 	reap_count++;
 }
 
+/* track the reload process to be reaped, when done */
+void reap_track_reload_process(pid_t reload_proc_pid, void (*reload_done_callback)(void))
+{
+	reload_pid = reload_proc_pid;
+	reload_callback = reload_done_callback;
+	reap_inc();
+}
+
 void reap_proc(void)
 {
-	int rc, i, max_reaps;
+	int i, max_reaps;
+	pid_t rc;
 
 	/*
 	 * We don't really need reap_count, but calling wait() all the
@@ -60,9 +73,13 @@ void reap_proc(void)
 	for (i = 0; i < max_reaps; i++) {
 		rc = waitpid(0, NULL, WNOHANG);
 		if (rc > 0) {
+			if (rc == reload_pid) {
+				log_debug(6, "reaped reload process");
+				reload_callback();
+			}
 			reap_count--;
 			log_debug(6, "reaped pid %d, reap_count now %d",
-				  rc, reap_count);
+				  (int)rc, reap_count);
 		}
 	}
 }
@@ -123,7 +140,7 @@ static int shutdown_wait_pids(void)
 #define POLL_ALARM	2
 #define POLL_MAX	3
 
-static int event_loop_stop;
+static volatile int event_loop_stop;
 static queue_task_t *shutdown_qtask; 
 
 void event_loop_exit(queue_task_t *qtask)
@@ -178,8 +195,16 @@ void event_loop(struct iscsi_ipc *ipc, int control_fd, int mgmt_ipc_fd)
 			if (poll_array[POLL_CTRL].revents)
 				ipc->ctldev_handle();
 
-			if (poll_array[POLL_IPC].revents)
-				mgmt_ipc_handle(mgmt_ipc_fd);
+			if (poll_array[POLL_IPC].revents) {
+				switch (ipc->auth_type) {
+				case ISCSI_IPC_AUTH_UID:
+					mgmt_ipc_handle_uid_only(mgmt_ipc_fd);
+					break;
+				default:
+					mgmt_ipc_handle(mgmt_ipc_fd);
+					break;
+				}
+			}
 
 			if (poll_array[POLL_ALARM].revents) {
 				struct signalfd_siginfo si;

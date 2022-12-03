@@ -134,7 +134,7 @@ int sysfs_resolve_link(char *devpath, size_t size)
 
 	strlcpy(link_path, sysfs_path, sizeof(link_path));
 	strlcat(link_path, devpath, sizeof(link_path));
-	len = readlink(link_path, link_target, sizeof(link_target));
+	len = readlink(link_path, link_target, sizeof(link_target) - 1);
 	if (len <= 0)
 		return -1;
 	link_target[len] = '\0';
@@ -168,9 +168,11 @@ struct sysfs_device *sysfs_device_get(const char *devpath)
 	int len;
 	char *pos;
 
+	if (!devpath)
+		return NULL;
+
 	/* we handle only these devpathes */
-	if (devpath != NULL &&
-	    strncmp(devpath, "/devices/", 9) != 0 &&
+	if (strncmp(devpath, "/devices/", 9) != 0 &&
 	    strncmp(devpath, "/subsystem/", 11) != 0 &&
 	    strncmp(devpath, "/module/", 8) != 0 &&
 	    strncmp(devpath, "/bus/", 5) != 0 &&
@@ -225,7 +227,7 @@ struct sysfs_device *sysfs_device_get(const char *devpath)
 	strlcpy(link_path, sysfs_path, sizeof(link_path));
 	strlcat(link_path, dev->devpath, sizeof(link_path));
 	strlcat(link_path, "/subsystem", sizeof(link_path));
-	len = readlink(link_path, link_target, sizeof(link_target));
+	len = readlink(link_path, link_target, sizeof(link_target) - 1);
 	if (len > 0) {
 		/* get subsystem from "subsystem" link */
 		link_target[len] = '\0';
@@ -255,7 +257,7 @@ struct sysfs_device *sysfs_device_get(const char *devpath)
 	strlcpy(link_path, sysfs_path, sizeof(link_path));
 	strlcat(link_path, dev->devpath, sizeof(link_path));
 	strlcat(link_path, "/driver", sizeof(link_path));
-	len = readlink(link_path, link_target, sizeof(link_target));
+	len = readlink(link_path, link_target, sizeof(link_target) - 1);
 	if (len > 0) {
 		link_target[len] = '\0';
 		dbg("driver link '%s' points to '%s'", link_path, link_target);
@@ -363,7 +365,7 @@ char *sysfs_attr_get_value(const char *devpath, const char *attr_name)
 		int len;
 		const char *pos;
 
-		len = readlink(path_full, link_target, sizeof(link_target));
+		len = readlink(path_full, link_target, sizeof(link_target) - 1);
 		if (len > 0) {
 			link_target[len] = '\0';
 			pos = strrchr(link_target, '/');
@@ -574,8 +576,12 @@ int sysfs_get_str(char *id, char *subsys, char *param, char *value,
 
 	value[0] = '\0';
 	sysfs_value = sysfs_get_value(id, subsys, param);
-	if (!sysfs_value || !strlen(sysfs_value))
+	if (!sysfs_value)
 		return EIO;
+	if (!strlen(sysfs_value)) {
+		free(sysfs_value);
+		return EIO;
+	}
 
 	len = strlen(sysfs_value);
 	if (len && (sysfs_value[len - 1] == '\n'))
