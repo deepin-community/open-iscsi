@@ -34,6 +34,10 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/prctl.h>
+#ifndef	NO_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
 
 #include "iscsid.h"
 #include "mgmt_ipc.h"
@@ -53,6 +57,10 @@
 #include "iscsid_req.h"
 #include "iscsi_err.h"
 
+#ifndef PR_SET_IO_FLUSHER
+#define PR_SET_IO_FLUSHER 57
+#endif
+
 /* global config info */
 struct iscsi_daemon_config daemon_config;
 struct iscsi_daemon_config *dconfig = &daemon_config;
@@ -60,8 +68,9 @@ struct iscsi_daemon_config *dconfig = &daemon_config;
 static char program_name[] = "iscsid";
 static pid_t log_pid;
 static gid_t gid;
-static int daemonize = 1;
+static bool daemonize = true;
 static int mgmt_ipc_fd;
+static int sessions_to_recover = 0;
 
 static struct option const long_options[] = {
 	{"config", required_argument, NULL, 'c'},
@@ -86,16 +95,16 @@ static void usage(int status)
 		printf("Usage: %s [OPTION]\n", program_name);
 		printf("\
 Open-iSCSI initiator daemon.\n\
-  -c, --config=[path]     Execute in the config file (" CONFIG_FILE ").\n\
+  -c, --config=[path]     Execute using the config file (" CONFIG_FILE ").\n\
   -i, --initiatorname=[path]     read initiatorname from file (" INITIATOR_NAME_FILE ").\n\
-  -f, --foreground        make the program run in the foreground\n\
-  -d, --debug debuglevel  print debugging information\n\
-  -u, --uid=uid           run as uid, default is current user\n\
-  -g, --gid=gid           run as gid, default is current user group\n\
-  -n, --no-pid-file       do not use a pid file\n\
-  -p, --pid=pidfile       use pid file (default " PID_FILE ").\n\
-  -h, --help              display this help and exit\n\
-  -v, --version           display version and exit\n\
+  -f, --foreground        Make the program run in the foreground\n\
+  -d, --debug debuglevel  Print debugging information\n\
+  -u, --uid=uid           Run as uid, default is current user\n\
+  -g, --gid=gid           Run as gid, default is current user group\n\
+  -n, --no-pid-file       Do not use a pid file\n\
+  -p, --pid=pidfile       Use pid file (default " PID_FILE ").\n\
+  -h, --help              Display this help and exit\n\
+  -v, --version           Display version and exit\n\
 ");
 	}
 	exit(status);
@@ -185,7 +194,8 @@ setup_rec_from_negotiated_values(node_rec_t *rec, struct session_info *info)
 	}
 }
 
-static int sync_session(void *data, struct session_info *info)
+static int sync_session(__attribute__((unused))void *data,
+			struct session_info *info)
 {
 	node_rec_t rec, sysfsrec;
 	iscsiadm_req_t req;
@@ -216,7 +226,7 @@ static int sync_session(void *data, struct session_info *info)
 				  iscsi_err_to_str(err));
 			return 0;
 		}
-		iscsi_sysfs_scan_host(host_no, 0);
+		iscsi_sysfs_scan_host(host_no, 0, idbm_session_autoscan(NULL));
 		return 0;
 	}
 
@@ -233,7 +243,7 @@ static int sync_session(void *data, struct session_info *info)
 
 	if (idbm_rec_read(&rec, info->targetname, info->tpgt,
 			  info->persistent_address, info->persistent_port,
-			  &info->iface)) {
+			  &info->iface, false)) {
 		log_warning("Could not read data from db. Using default and "
 			    "currently negotiated values");
 		setup_rec_from_negotiated_values(&rec, info);
@@ -274,12 +284,15 @@ static int sync_session(void *data, struct session_info *info)
 	memcpy(&req.u.session.rec, &rec, sizeof(node_rec_t));
 
 retry:
-	rc = iscsid_exec_req(&req, &rsp, 0);
+	rc = iscsid_exec_req(&req, &rsp, 0, info->iscsid_req_tmo);
 	if (rc == ISCSI_ERR_ISCSID_NOTCONN && retries < 30) {
 		retries++;
 		sleep(1);
 		goto retry;
+	} else if (rc == ISCSI_ERR_SESS_EXISTS) {
+		log_debug(1, "sync session %d returned ISCSI_ERR_SESS_EXISTS", info->sid);
 	}
+
 	return 0;
 }
 
@@ -296,7 +309,7 @@ static void iscsid_shutdown(void)
 	while ((pid = waitpid(0, NULL, 0) > 0))
 		log_debug(7, "cleaned up pid %d", pid);
 
-	log_warning("iscsid shutting down.");
+	log_info("iscsid shutting down.");
 	if (daemonize && log_pid >= 0) {
 		log_debug(1, "daemon stopping");
 		log_close(log_pid);
@@ -305,7 +318,12 @@ static void iscsid_shutdown(void)
 
 static void catch_signal(int signo)
 {
-	log_debug(1, "pid %d caught signal %d", getpid(), signo);
+	/*
+	 * Do not try to call log_debug() if there is a PIPE error
+	 * because we can get caught in a PIPE error loop.
+	 */
+	if (signo != SIGPIPE)
+		log_debug(1, "pid %d caught signal %d", getpid(), signo);
 
 	/* In foreground mode, treat SIGINT like SIGTERM */
 	if (!daemonize && signo == SIGINT)
@@ -313,8 +331,7 @@ static void catch_signal(int signo)
 
 	switch (signo) {
 	case SIGTERM:
-		iscsid_shutdown();
-		exit(0);
+		event_loop_exit(NULL);
 		break;
 	default:
 		break;
@@ -335,6 +352,30 @@ static void missing_iname_warn(char *initiatorname_file)
 		  "ignored.", initiatorname_file, initiatorname_file);
 }
 
+/* called right before we enter the event loop */
+static void set_state_to_ready(void)
+{
+#ifndef	NO_SYSTEMD
+	if (sessions_to_recover)
+		sd_notify(0, "READY=1\n"
+				"RELOADING=1\n"
+				"STATUS=Syncing existing session(s)\n");
+	else
+		sd_notify(0, "READY=1\n"
+				"STATUS=Ready to process requests\n");
+#endif
+}
+
+/* called when recovery process has been reaped */
+static void set_state_done_reloading(void)
+{
+#ifndef	NO_SYSTEMD
+	sessions_to_recover = 0;
+	sd_notifyf(0, "READY=1\n"
+			"STATUS=Ready to process requests\n");
+#endif
+}
+
 int main(int argc, char *argv[])
 {
 	struct utsname host_info; /* will use to compound initiator alias */
@@ -342,12 +383,15 @@ int main(int argc, char *argv[])
 	char *initiatorname_file = INITIATOR_NAME_FILE;
 	char *pid_file = PID_FILE;
 	char *safe_logout;
+	char *ipc_auth_uid;
 	int ch, longindex;
 	uid_t uid = 0;
 	struct sigaction sa_old;
 	struct sigaction sa_new;
 	int control_fd;
 	pid_t pid;
+	bool pid_file_specified = false;
+	bool no_pid_file_specified = false;
 
 	while ((ch = getopt_long(argc, argv, "c:i:fd:nu:g:p:vh", long_options,
 				 &longindex)) >= 0) {
@@ -359,7 +403,7 @@ int main(int argc, char *argv[])
 			initiatorname_file = optarg;
 			break;
 		case 'f':
-			daemonize = 0;
+			daemonize = false;
 			break;
 		case 'd':
 			log_level = atoi(optarg);
@@ -372,9 +416,11 @@ int main(int argc, char *argv[])
 			break;
 		case 'n':
 			pid_file = NULL;
+			no_pid_file_specified = true;
 			break;
 		case 'p':
 			pid_file = optarg;
+			pid_file_specified = true;
 			break;
 		case 'v':
 			printf("%s version %s\n", program_name,
@@ -386,6 +432,17 @@ int main(int argc, char *argv[])
 		default:
 			usage(1);
 			break;
+		}
+	}
+
+	if (pid_file_specified) {
+		if (no_pid_file_specified) {
+			fprintf(stderr, "error: Conflicting PID-file options requested\n");
+			usage(1);
+		}
+		if (!daemonize) {
+			fprintf(stderr, "error: PID file specified but unused in foreground mode\n");
+			usage(1);
 		}
 	}
 
@@ -409,7 +466,7 @@ int main(int argc, char *argv[])
 		exit(ISCSI_ERR);
 	}
 
-	umask(0177);
+	umask(0077);
 
 	mgmt_ipc_fd = -1;
 	control_fd = -1;
@@ -439,13 +496,8 @@ int main(int argc, char *argv[])
 			log_close(log_pid);
 			exit(ISCSI_ERR);
 		} else if (pid) {
-			log_error("iSCSI daemon with pid=%d started!", pid);
+			log_info("iSCSI daemon with pid=%d started!", pid);
 			exit(0);
-		}
-
-		if ((control_fd = ipc->ctldev_open()) < 0) {
-			log_close(log_pid);
-			exit(ISCSI_ERR);
 		}
 
 		if (chdir("/") < 0)
@@ -467,6 +519,12 @@ int main(int argc, char *argv[])
 				log_close(log_pid);
 				exit(ISCSI_ERR);
 			}
+		}
+		close(fd);
+
+		if ((control_fd = ipc->ctldev_open()) < 0) {
+			log_close(log_pid);
+			exit(ISCSI_ERR);
 		}
 
 		daemon_init();
@@ -526,18 +584,36 @@ int main(int argc, char *argv[])
 		daemon_config.safe_logout = 1;
 	free(safe_logout);
 
-	pid = fork();
-	if (pid == 0) {
-		int nr_found = 0;
-		/* child */
-		/* TODO - test with async support enabled */
-		iscsi_sysfs_for_each_session(NULL, &nr_found, sync_session, 0);
-		exit(0);
-	} else if (pid < 0) {
-		log_error("Fork failed error %d: existing sessions"
-			  " will not be synced", errno);
-	} else
-		reap_inc();
+	ipc_auth_uid = cfg_get_string_param(config_file, "iscsid.ipc_auth_uid");
+	if (ipc_auth_uid && !strcmp(ipc_auth_uid, "Yes"))
+		ipc->auth_type = ISCSI_IPC_AUTH_UID;
+	free(ipc_auth_uid);
+
+	/* see if we have any stale sessions to recover */
+	sessions_to_recover = iscsi_sysfs_count_sessions();
+	if (sessions_to_recover) {
+
+		/*
+		 * recover stale sessions in the background
+		 */
+
+		pid = fork();
+		if (pid == 0) {
+			int nr_found; /* not used */
+			/* child */
+			/* TODO - test with async support enabled */
+			iscsi_sysfs_for_each_session(NULL, &nr_found, sync_session, 0);
+			exit(0);
+		} else if (pid < 0) {
+			log_error("Fork failed error %d: existing sessions"
+				  " will not be synced", errno);
+		} else {
+			/* parent */
+			log_debug(8, "forked child (pid=%d) to recover %d session(s)",
+					(int)pid, sessions_to_recover);
+			reap_track_reload_process(pid, set_state_done_reloading);
+		}
+	}
 
 	iscsi_initiator_init();
 	increase_max_files();
@@ -554,6 +630,16 @@ int main(int argc, char *argv[])
 		exit(ISCSI_ERR);
 	}
 
+	if (prctl(PR_SET_IO_FLUSHER, 1, 0, 0, 0) == -1) {
+		if (errno == EINVAL) {
+			log_info("prctl could not mark iscsid with the PR_SET_IO_FLUSHER flag, because the feature is not supported in this kernel. Will proceed, but iscsid may hang during session level recovery if memory is low.\n");
+		} else {
+			log_error("prctl could not mark iscsid with the PR_SET_IO_FLUSHER flag due to error %s\n",
+				  strerror(errno));
+		}
+	}
+
+	set_state_to_ready();
 	event_loop(ipc, control_fd, mgmt_ipc_fd);
 
 	idbm_terminate();

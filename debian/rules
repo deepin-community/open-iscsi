@@ -1,85 +1,85 @@
 #!/usr/bin/make -f
-# Uncomment this to turn on verbose mode.
-#export DH_VERBOSE=1
+# export DH_VERBOSE = 1
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
-export DEB_CFLAGS_MAINT_APPEND = -Wall -DOFFLOAD_BOOT_SUPPORTED
-
 DPKG_EXPORT_BUILDFLAGS = 1
-include /usr/share/dpkg/default.mk
+include /usr/share/dpkg/buildflags.mk
+include /usr/share/dpkg/pkg-info.mk
+export KBUILD_BUILD_TIMESTAMP = "@$(SOURCE_DATE_EPOCH)"
+
+UDEB := $(filter open-iscsi-udeb,$(shell dh_listpackages))
+
+ifneq ($(UDEB),)
+TREENAMES = build-deb build-udeb
+else
+TREENAMES = build-deb
+endif
 
 %:
-	dh $@ --with autotools_dev,autoreconf,systemd
+	dh $@
 
-DEB_UPSTREAM_VERSION := $(shell dpkg-parsechangelog | sed -rne 's,^Version: ([^-]+).*,\1,p')
+execute_before_dh_clean:
+	for treename in $(TREENAMES); do \
+		rm -rf debian/$$treename ;\
+	done
+	rm -rf debian/tmp-udeb
 
-get-orig-source:
-	uscan --force-download --rename --repack --download-version=$(DEB_UPSTREAM_VERSION) --destdir=.
+execute_before_dh_auto_configure:
+	# no out of tree build support, prepare two source trees
+	for treename in $(TREENAMES); do \
+		mkdir debian/$$treename ;\
+		cp -r -t debian/$$treename $$(find . -mindepth 1 -maxdepth 1 \! -name debian \! -name .git) ;\
+	done
+
+override_dh_auto_configure:
+	for treename in $(TREENAMES); do \
+		cat debian/buildconfig.common debian/buildconfig.$$treename Makefile > debian/$$treename/Makefile ;\
+		CFLAGS="$(CPPFLAGS) $(CFLAGS)" dh_auto_configure --sourcedirectory=debian/$$treename ;\
+		CFLAGS="$(CPPFLAGS) $(CFLAGS)" dh_auto_configure --sourcedirectory=debian/$$treename/iscsiuio ;\
+	done
 
 override_dh_auto_build:
-	@# We want to regenerate the parser/lexer files with bison/flex
-	@# to make sure that the package is fully built from source.
-	@# Store the generated files upstream added to the source
-	@# tarball away and explicitly call flex/bison here.
-	mv utils/fwparam_ibft/prom_lex.c       utils/fwparam_ibft/prom_lex.c.upstream
-	mv utils/fwparam_ibft/prom_parse.tab.c utils/fwparam_ibft/prom_parse.tab.c.upstream
-	mv utils/fwparam_ibft/prom_parse.tab.h utils/fwparam_ibft/prom_parse.tab.h.upstream
-	cd utils/fwparam_ibft && flex -t prom_lex.l | \
-		../../debian/workaround_flex_bug.sh > prom_lex.c
-	cd utils/fwparam_ibft && bison -d prom_parse.y
-
-	@# The build system doesn't support CPPFLAGS
-	env CFLAGS="$(CPPFLAGS) $(CFLAGS)" dh_auto_build
-	@# Build udeb variant without libmount
-	mkdir -p build.deb
-	cp -a usr/iscsid usr/iscsistart build.deb/
-	rm usr/initiator_common.o usr/mntcheck.o usr/iscsid usr/iscsistart
-	env CFLAGS="$(CPPFLAGS) $(CFLAGS) -DNO_LIBMOUNT" dh_auto_build -- LIBMOUNT_LIB=
+	for treename in $(TREENAMES); do \
+		CFLAGS="$(CPPFLAGS) $(CFLAGS)" NO_SYSTEMD=$$NO_SYSTEMD dh_auto_build --sourcedirectory=debian/$$treename ;\
+	done
 
 override_dh_auto_install:
-	@# do nothing, we install stuff with dh_install etc.
+	# workaround upstream makefile parallelism problem
+	dh_auto_install --no-parallel --sourcedirectory=debian/build-deb
+ifneq ($(UDEB),)
+	dh_auto_install --no-parallel --sourcedirectory=debian/build-udeb --destdir=$(CURDIR)/debian/tmp-udeb
+endif
 
-override_dh_auto_clean:
-	dh_auto_clean
-	rm -rf build.deb
-	@# Make dpkg-source happy and restore upstream's generated lexer/parser files
-	@# in the clean step.
-	! [ -f utils/fwparam_ibft/prom_lex.c.upstream ]       || mv utils/fwparam_ibft/prom_lex.c.upstream       utils/fwparam_ibft/prom_lex.c
-	! [ -f utils/fwparam_ibft/prom_parse.tab.c.upstream ] || mv utils/fwparam_ibft/prom_parse.tab.c.upstream utils/fwparam_ibft/prom_parse.tab.c
-	! [ -f utils/fwparam_ibft/prom_parse.tab.h.upstream ] || mv utils/fwparam_ibft/prom_parse.tab.h.upstream utils/fwparam_ibft/prom_parse.tab.h
-
-override_dh_fixperms:
-	dh_fixperms
-	@# That configuration file might contain authentication data, so
-	@# don't make it world-readable. See bug #735773 for details.
-	chmod 0600 $(CURDIR)/debian/open-iscsi/etc/iscsi/iscsid.conf
-	@# Since this file is copied from the installer ramdisk to the
-	@# system if the udeb is used, the permissions need to be changed
-	@# here as well.
-	@# However, we might be building on an architecture that doesn't
-	@# have udeb support yet (see debian/control), so see if it was
-	@# installed during build before trying to adjust permissions.
-	if [ -f $(CURDIR)/debian/open-iscsi-udeb/etc/iscsi/iscsid.conf ] ; then \
-		chmod 0600 $(CURDIR)/debian/open-iscsi-udeb/etc/iscsi/iscsid.conf ; \
+ifneq ($(UDEB),)
+execute_after_dh_install:
+	if strings debian/open-iscsi-udeb/sbin/iscsid | grep libsystemd.so ; then \
+		echo ERROR: udeb linked to libsystemd ;\
+		exit 1 ;\
 	fi
-
-override_dh_installchangelogs:
-	dh_installchangelogs -piscsiuio iscsiuio/ChangeLog
-	dh_installchangelogs --remaining-packages
+endif
 
 override_dh_installinit:
-	dh_installinit -popen-iscsi --no-start --name=iscsid
-	dh_installinit -popen-iscsi --no-start
-	dh_installinit --remaining-packages
+	dh_installinit -p open-iscsi --no-start --no-enable --no-stop-on-upgrade --name=iscsid
+	dh_installinit -p open-iscsi --no-start --no-enable --no-stop-on-upgrade
+	dh_installinit -p iscsiuio --no-start --no-enable --no-stop-on-upgrade
 
-override_dh_systemd_enable:
-	dh_systemd_enable -popen-iscsi --name=iscsid
-	dh_systemd_enable -popen-iscsi
-	dh_systemd_enable --remaining-packages
+override_dh_installsystemd:
+	dh_installsystemd -p open-iscsi --no-restart-on-upgrade iscsid.socket
+	dh_installsystemd -p open-iscsi --no-restart-on-upgrade open-iscsi.service
+	dh_installsystemd -p iscsiuio --no-restart-on-upgrade iscsiuio.service
 
-override_dh_systemd_start:
-	dh_systemd_start -popen-iscsi --no-restart-on-upgrade --no-start iscsid.service open-iscsi.service
-	dh_systemd_start --remaining-packages
+override_dh_installdocs:
+	dh_installdocs -p open-iscsi README sysfs-documentation THANKS
+	dh_installdocs -p iscsiuio iscsiuio/RELEASE.TXT iscsiuio/README
+	dh_installdocs -p libopeniscsiusr
+	dh_installdocs -p libopeniscsiusr-dev
+
+override_dh_makeshlibs:
+ifneq ($(UDEB),)
+	dh_makeshlibs --add-udeb=open-iscsi-udeb
+else
+	dh_makeshlibs
+endif
 
 # The following is taken from the initramfs-tools package. (We recommend
 # busybox in the initramfs because otherwise we don't have access to the

@@ -1,0 +1,18 @@
+Index: open-iscsi/libopeniscsiusr/Makefile
+===================================================================
+--- open-iscsi.orig/libopeniscsiusr/Makefile
++++ open-iscsi/libopeniscsiusr/Makefile
+@@ -17,11 +17,8 @@ SBINDIR ?= $(exec_prefix)/sbin
+ DBROOT ?= $(etcdir)/iscsi
+ 
+ ifndef LIB_DIR
+-	ifeq ($(shell test -d /lib64 && echo 1),1)
+-		LIB_DIR=$(prefix)/lib64
+-	else
+-		LIB_DIR=$(prefix)/lib
+-	endif
++	DEB_HOST_MULTIARCH  ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
++	LIB_DIR=$(prefix)/lib/$(DEB_HOST_MULTIARCH)
+ endif
+ 
+ INCLUDE_DIR ?= $(prefix)/include

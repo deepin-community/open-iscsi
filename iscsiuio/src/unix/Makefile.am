@@ -20,21 +20,20 @@ iscsiuio_SOURCES =	build_date.c		\
 			nic_utils.c		\
 			packet.c		\
 			iscsid_ipc.c		\
-			ping.c
+			ping.c			\
+			${top_srcdir}/../sysdeps/sysdeps.c
 
 iscsiuio_CFLAGS = 	$(AM_CFLAGS)		\
 			$(LIBNL_CFLAGS)		\
 			-DBYTE_ORDER=@ENDIAN@
 
-iscsiuio_LDFLAGS= 	$(AM_LDADD)		\
-			-ldl			\
-			-rdynamic		\
-			$(LIBNL_LIBS)		\
-			-lpthread
-
-iscsiuio_LDADD  = 	${top_srcdir}/src/uip/lib_iscsi_uip.a	\
-			${top_srcdir}/src/apps/dhcpc/lib_apps_dhcpc.a\
+iscsiuio_LDADD = 	${top_srcdir}/src/uip/lib_iscsi_uip.a   		\
+			${top_srcdir}/src/apps/dhcpc/lib_apps_dhcpc.a   	\
 			${top_srcdir}/src/apps/brcm-iscsi/lib_apps_brcm_iscsi.a \
-			${top_srcdir}/src/unix/libs/lib_iscsiuio_hw_cnic.a
+			${top_srcdir}/src/unix/libs/lib_iscsiuio_hw_cnic.a	\
+			$(AM_LDADD)						\
+			-ldl							\
+			$(LIBNL_LIBS)						\
+			-lpthread
 
 iscsiuio_YFLAGS = -d

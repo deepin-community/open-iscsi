@@ -21,6 +21,8 @@
 #include "iscsi_err.h"
 #include "log.h"
 
+enum iscsi_error_list iscsi_err;
+
 static char *iscsi_err_msgs[] = {
 	/* 0 */ "",
 	/* 1 */ "unknown error",
@@ -54,6 +56,8 @@ static char *iscsi_err_msgs[] = {
 	/* 29 */ "operation failed but retry may succeed",
 	/* 30 */ "unknown discovery type",
 	/* 31 */ "child process terminated",
+	/* 32 */ "target likely not connected",
+	/* 33 */ "iscsid request timed out",
 };
 
 char *iscsi_err_to_str(int err)

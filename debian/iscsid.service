@@ -7,13 +7,13 @@ After=network.target network-online.target
 DefaultDependencies=no
 Conflicts=shutdown.target
 Before=shutdown.target
+ConditionVirtualization=!private-users
 
 [Service]
 Type=forking
 PIDFile=/run/iscsid.pid
 ExecStartPre=/lib/open-iscsi/startup-checks.sh
 ExecStart=/sbin/iscsid
-ExecStop=/sbin/iscsiadm -k 0 2
 
 [Install]
 WantedBy=sysinit.target

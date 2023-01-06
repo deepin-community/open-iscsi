@@ -50,7 +50,7 @@
 #include <linux/netlink.h>
 #include <iscsi_if.h>
 #include <sys/ioctl.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/types.h>
 #include <sys/user.h>
 #include <sys/socket.h>
@@ -278,7 +278,7 @@ static const struct timespec ctldev_sleep_req = {
 
 static int ctldev_handle(char *data, nic_t *nic)
 {
-	int rc;
+	int rc = 0;
 	struct iscsi_uevent *ev;
 	uint8_t *payload;
 	struct iscsi_path *path;
@@ -534,7 +534,7 @@ static void flush_nic_nl_process_ring(nic_t *nic)
  */
 int nic_nl_open()
 {
-	int rc;
+	int rc = 0;
 	char *msg_type_str;
 
 	/* Prepare the thread to issue the ARP's */
@@ -676,5 +676,5 @@ int nic_nl_open()
 	rc = 0;
 
 error:
-	return 0;
+	return rc;
 }

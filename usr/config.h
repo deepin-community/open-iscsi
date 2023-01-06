@@ -58,6 +58,7 @@ struct iscsi_auth_config {
 	char username_in[AUTH_STR_MAX_LEN];
 	unsigned char password_in[AUTH_STR_MAX_LEN];
 	unsigned int password_in_length;
+	unsigned int chap_algs[AUTH_CHAP_ALG_MAX_COUNT];
 };
 
 /* all per-connection timeouts go in this structure.
@@ -190,6 +191,7 @@ typedef struct session_rec {
 	int					queue_depth;
 	int					initial_login_retry_max;
 	int					nr_sessions;
+	int					scan;
 	struct iscsi_auth_config		auth;
 	struct iscsi_session_timeout_config	timeo;
 	struct iscsi_error_timeout_config	err_timeo;
@@ -225,6 +227,7 @@ typedef struct iface_rec {
 	char			ipv6_autocfg[NI_MAXHOST];
 	char			linklocal_autocfg[NI_MAXHOST];
 	char			router_autocfg[NI_MAXHOST];
+	uint8_t			prefix_len;
 	uint16_t		vlan_id;
 	uint8_t			vlan_priority;
 	char			vlan_state[ISCSI_MAX_STR_LEN];
@@ -315,6 +318,7 @@ typedef struct discovery_rec {
 	discovery_type_e	type;
 	char			address[NI_MAXHOST];
 	int			port;
+	int			iscsid_req_tmo;
 	union {
 		struct iscsi_sendtargets_config	sendtargets;
 		struct iscsi_slp_config		slp;

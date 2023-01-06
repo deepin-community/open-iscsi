@@ -19,9 +19,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
-#ifdef USE_KMOD
 #include <libkmod.h>
-#endif
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -91,6 +89,7 @@ struct iscsi_transport_template bnx2i = {
 struct iscsi_transport_template be2iscsi = {
 	.name		= "be2iscsi",
         .bind_ep_required = 1,
+	.sync_vlan_settings = 1,
 	.create_conn	= be2iscsi_create_conn,
 	.ep_connect	= ktransport_ep_connect,
 	.ep_poll	= ktransport_ep_poll,
@@ -114,6 +113,19 @@ struct iscsi_transport_template ocs = {
 	.ep_disconnect	= ktransport_ep_disconnect,
 };
 
+struct iscsi_transport_template qedi = {
+	.name		= "qedi",
+	.set_host_ip	= SET_HOST_IP_REQ,
+	.use_boot_info	= 1,
+	.bind_ep_required = 1,
+	.no_netdev = 1,
+	.ep_connect	= ktransport_ep_connect,
+	.ep_poll	= ktransport_ep_poll,
+	.ep_disconnect	= ktransport_ep_disconnect,
+	.set_net_config = uip_broadcast_params,
+	.exec_ping	= uip_broadcast_ping_req,
+};
+
 static struct iscsi_transport_template *iscsi_transport_templates[] = {
 	&iscsi_tcp,
 	&iscsi_iser,
@@ -123,6 +135,7 @@ static struct iscsi_transport_template *iscsi_transport_templates[] = {
 	&qla4xxx,
 	&be2iscsi,
 	&ocs,
+	&qedi,
 	NULL
 };
 
@@ -177,7 +190,6 @@ free_ifni:
  * Most distros still do not have wide libkmod use, so
  * use modprobe for now
  */
-#ifdef USE_KMOD
 int transport_load_kmod(char *transport_name)
 {
 	struct kmod_ctx *ctx;
@@ -222,55 +234,6 @@ unref_mod:
 	kmod_unref(ctx);
 	return rc;
 }
-
-#else
-
-int transport_load_kmod(char *transport_name)
-{
-	char *cmdline[4];
-	pid_t pid;
-
-	cmdline[0] = "/sbin/modprobe";
-	cmdline[1] = "-qb";
-	cmdline[3] = NULL;
-
-	/*
-	 * dumb dumb mistake - named iscsi_tcp and ib_iser differently from
-	 * transport name
-	 */
-	if (!strcmp(transport_name, "tcp"))
-		cmdline[2] = "iscsi_tcp";
-	else if (!strcmp(transport_name, "iser"))
-		cmdline[2] = "ib_iser";
-	else
-		cmdline[2] = transport_name;
-
-	if (iscsi_sysfs_is_transport_loaded(cmdline[2]))
-		return 0;
-
-	pid = fork();
-	if (pid == 0) {
-		if (execv("/sbin/modprobe", cmdline) < 0) {
-			log_error("Failed to load module %s: %s",
-				   transport_name, strerror(errno));
-			exit(-errno);
-		}
-		exit(0);
-	} else if (pid < 0) {
-		log_error("Failed to fork process to load module %s: %s",
-			  transport_name, strerror(errno));
-		return ISCSI_ERR_TRANS_NOT_FOUND;
-	}
-
-	if (waitpid(pid, NULL, 0) < 0) {
-		log_error("Failed to load module %s", transport_name);
-		return ISCSI_ERR_TRANS_NOT_FOUND;
-	}
-
-	return 0;
-}
-
-#endif
 
 int set_transport_template(struct iscsi_transport *t)
 {
