@@ -94,9 +94,6 @@ restarttargets() {
 }
 
 status() {
-	#XXX FIXME: what to do here?
-	#status iscsid
-	# list active sessions
 	echo Current active iSCSI sessions:
 	$ADM -m session
 }

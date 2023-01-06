@@ -49,7 +49,7 @@
 #include "dhcpv6.h"
 #include "ping.h"
 
-inline int best_match_bufcmp(u8_t *a, u8_t *b, int len)
+static inline int best_match_bufcmp(u8_t *a, u8_t *b, int len)
 {
 	int i;
 
@@ -519,7 +519,7 @@ static void ipv6_insert_protocol_chksum(struct ipv6_hdr *ipv6)
 	 * SRC IP, DST IP, Protocol Data Length, and Next Header.
 	 */
 	sum = 0;
-	ptr = (u16_t *)&ipv6->ipv6_src;
+	ptr = (u16_t *)&ipv6->ipv6_src.addr16[0];
 
 	for (i = 0; i < sizeof(struct ipv6_addr); i++) {
 		sum += HOST_TO_NET16(*ptr);

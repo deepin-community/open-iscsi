@@ -1,9 +1,250 @@
-open-iscsi (2.0.874-7.1) unstable; urgency=medium
+open-iscsi (2.1.8-1) unstable; urgency=medium
 
-  * Non-maintainer upload
-  * [38db62d] Update patch for missing macro (Closes: #908160)
+  [ Chris Hofstaedtler ]
+  * [be2751b] New upstream version 2.1.8 (Closes: #1021742)
+  * [6697df5] Remove upstream applied non-usrmerge-sed.patch
 
- -- Hilko Bengen <bengen@debian.org>  Wed, 12 Dec 2018 01:05:19 +0100
+  [ Eric Mackay ]
+  * [7dbf2c1] Man pages are no longer gzipped in upstream code
+  * [833e478] Drop upstream 341 and 354 patches, refresh remaining patches
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Wed, 19 Oct 2022 15:59:32 +0000
+
+open-iscsi (2.1.7-2) unstable; urgency=medium
+
+  * [09dfaec] Enable hardening build flags
+  * [c0ce256] d/rules: remove unused DEB_HOST_MULTIARCH
+  * [70574d1] Run separate build for udeb to avoid libsystemd dependency
+    (Closes: #1003366)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sat, 30 Jul 2022 14:23:25 +0000
+
+open-iscsi (2.1.7-1) unstable; urgency=medium
+
+  * [3050096] New upstream version 2.1.7 (Closes: #982307, #1016246)
+  * [46fd279] Refresh patches, drop upstream applied ftbfs patch
+  * [cac01da] Help upstream Makefile find sed in /bin
+  * [0202184] Add patches from upstream master to fix build
+  * [f61e6a0] Use dh_auto_install, better suits new upstream build system
+  * [2080bfb] Fix multiarch install location
+  * [4f57eb7] Move udeb files into correct places (like in 2.0.874-7.1)
+  * [75b86ce] Cleanup duplicate override_dh_installsystemd section
+    (Closes: #1004014)
+  * [24f9981] d/copyright: update
+  * [41970e3] Rely on dh_installinitramfs to install triggers
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Fri, 29 Jul 2022 19:59:11 +0000
+
+open-iscsi (2.1.5-1) unstable; urgency=medium
+
+  * [150470c] New upstream version 2.1.5
+  * [7ca9f9e] Install the debian iscsid.service unit (Closes: #996708)
+  * [d660992] Add patch to fix build failure with gcc-11
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Thu, 21 Oct 2021 21:36:50 +0530
+
+open-iscsi (2.1.4-2) unstable; urgency=low
+
+  [ Debian Janitor ]
+  * [66832cc] Trim trailing whitespace.
+  * [f68aaaf] debian/copyright: use spaces rather than tabs to start
+    continuation lines.
+  * [16eb556] Use secure URI in Homepage field.
+  * [c3f9946] Bump debhelper dependency to >= 10, since that's what
+    is used in debian/compat.
+  * [693da74] Bump debhelper from old 10 to 13.
+    + Use dh_installsystemd rather than deprecated dh_systemd_enable.
+    + Use dh_installsystemd rather than deprecated dh_systemd_start.
+    + debian/rules: Drop --fail-missing argument to dh_missing, which
+      is now the default.
+  * [107b3e4] Set debhelper-compat version in Build-Depends.
+  * [68b97c5] Remove unnecessary 'Testsuite: autopkgtest' header.
+  * [b80b61e] Set upstream metadata fields: Bug-Database, Bug-Submit,
+    Repository, Repository-Browse.
+  * [1096e5b] Update standards version to 4.5.1, no changes needed.
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Thu, 09 Sep 2021 19:36:42 +0530
+
+open-iscsi (2.1.4-1) unstable; urgency=low
+
+  [ Ritesh Raj Sarraf ]
+  * [1a58d4e] Drop patches. Part of new upstream release
+  * [a264531] Rebase patch
+
+  [ Rafael David Tinoco ]
+  * d/iscsid.service: Let iscsid systemd job run in privileged
+    containers but not in unprivileged ones
+  * debian/extra/initramfs.local-top: handle iSCSI iBFT DHCP to
+    correctly run ipconfig to gather all DHCP config info, including
+    DNS search domain, which iBFT can't provide.
+  * Remove initramfs interfaces stamp in case no iscsi devs mounted
+  * add IPv6 support
+    - Source /run/net6-*.conf when needed.
+    - debian/extra/initramfs.local-top: handle IPv6 configs being
+      shipped in DEVICE6 or /run/net6-*.conf in the initramfs, so we
+      can fill in /run/initramfs/open-iscsi.interface
+  * d/rules, d/open-iscsi.finalrd, d/control: ship the finalrd iscsi
+    logout hook and recommend finalrd and busybox for the logout hook
+    to work.
+  * Make iscsid socket-activated to only activate it as needed:
+    - debian/open-iscsi.service: do not start or check iscsid.service
+    - debian/rules: install iscsid.socket
+    - debian/open-iscsi.postinst:
+    - upgrade: run restart logic only if service is running
+    - upgrade: disable iscsid.service and enable iscsid.socket
+    - iscsid.socket not started if the service is not running yet
+    - d/iscsi-disk.rules: Add a udev rule so that iscsid.service will be
+      run when udev disks are attached.
+    - d/iscsid.service: Remove ExecStop= directive.
+    - debian/tests/install: fix tests to work with socket activation
+    - debian/patches/lp1755858-default-iscsid_conf-to-iscsid_socket.patch
+  * debian/open-iscsi.service: Start open-iscsi systemd job when either
+    /etc/iscsi/nodes or /sys/class/iscsi_session have content.
+  * Prevent network interface that contains iscsi root from bouncing
+    during boot or going down during shutdown if the system is using
+    resolvconf or ifupdown:
+    - debian/iscsi-network-interface.rules
+    - debian/extra/net-interface-handler
+  * debian/extra/initramfs.hook: add ib_iser to the list of modules
+    included in the initramfs, so that we can in principle support
+    iscsi root on infiniband.
+  * debian/open-iscsi.kmod drop: (LP: #1833586) no static module
+    list is needed if we let iscsid load modules itself.
+  * d/extra/initramfs.local-{top,bottom}: move removal of
+    open-iscsi.interface file from local-top to local-bottom, and fix
+    shell quoting issue that would result in
+    /run/initramfs/open-iscsi.interface always being removed
+    (LP: #1872813)
+  * d/rules: Don't FTBFS due to warnings new in gcc10 regarding bounds
+    and initialization, because upstream's gcc10 support is incomplete.
+    This change can be dropped when upstream has completed their gcc
+    support.
+
+  [ Christian Ehrhardt ]
+  * [84e211f] New upstream version 2.1.4
+
+  [ Debian Janitor ]
+  * [03a860a] Remove constraints unnecessary since buster
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Thu, 02 Sep 2021 18:07:51 +0530
+
+open-iscsi (2.1.3-5) unstable; urgency=medium
+
+  [ Cyril Brulebois ]
+  * [3b8b2d8] Revert "Set architecture for build to linux-any"
+  * [1297e50] Adjust dh_auto_install and dh_makeshlibs overrides for the conditional udeb.
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Thu, 20 May 2021 19:52:30 +0530
+
+open-iscsi (2.1.3-4) unstable; urgency=medium
+
+  * [8142984] Set architecture for build to linux-any. This ensures that the
+    library is built on the right set of architectures and dh_makeshlibs is
+    invoked appropriately. (Closes: #987858)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 04 May 2021 21:45:56 +0530
+
+open-iscsi (2.1.3-3) unstable; urgency=medium
+
+  * [47645a5] Make open-iscsi-udeb compatible with d-i.
+    Thanks to Cyril Brulebois (Closes: #987568)
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Thu, 29 Apr 2021 13:43:35 +0530
+
+open-iscsi (2.1.3-2) unstable; urgency=medium
+
+  * [c3b7109] Fix FTCBFS:
+    Let dh_auto_configure pass --host to iscsiuio/configure.
+    Thanks to Helmut Grohne <helmut@subdivi.de> (Closes: #898758)
+  * [efb5512] Add patches from upstream:
+    Fix memory leak in iscsiadm, Fix iscsiadm segfault when exiting, and
+    Fix iscsistart login issue when target is delayed. The last one should
+    fix #980085. (Closes: #980085)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sun, 07 Feb 2021 19:23:13 +0000
+
+open-iscsi (2.1.3-1) unstable; urgency=medium
+
+  * [afee47d] New upstream version 2.1.3
+    - Fixes CVE-2020-13987, CVE-2020-17437, CVE-2020-13988.
+  * [236761e] Mark open-iscsi, iscsiuio M-A: foreign (Closes: #941099)
+  * [3e25b6a] d/README.source: remove obsolete get-orig-source note
+  * [296cd55] Explicitly set build date for docs.
+    Thanks to Chris Lamb <lamby@debian.org> (Closes: #975046)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Thu, 24 Dec 2020 00:09:46 +0000
+
+open-iscsi (2.1.2-2) unstable; urgency=medium
+
+  * Source-only upload to allow testing migration.
+  * Add myself to Uploaders.
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sun, 06 Dec 2020 23:25:11 +0000
+
+open-iscsi (2.1.2-1) unstable; urgency=medium
+
+  * [7f10701] New upstream version 2.1.2
+  * [51e4a23] Drop all patches
+  * [94b33e9] Fix Vcs-Browser link
+  * [36f52c9] Add a news entry about linkage with OpenSSL
+  * [8bee5c7] Update d/copyright with copyright and license information
+  * [02bacbf] Remove unused code to parse changelog
+  * [72bc9ac] Set libopensicsiusr-dev to arch:all as it has no
+    architecture dependent files
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Sun, 15 Nov 2020 17:09:06 +0530
+
+open-iscsi (2.1.1-2) unstable; urgency=medium
+
+  * Upload to Unstable
+  * [71e9333] Set to master
+  * [dd49a5a] Add patches to fix compiler warnings
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Fri, 14 Aug 2020 12:32:16 +0530
+
+open-iscsi (2.1.1-1) experimental; urgency=medium
+
+  [ Rafael David Tinoco ]
+  * New upstream version 2.1.1:
+    - [76d0a49] Remove OpenSSL dependency due to GPL license conflict
+    - [5f12ebf] Bump compatibility
+    - [44034fb] Updates to debian/rules:
+      - Update package description from upstream documentation
+      - Update Standards-Version
+      - Update Build-Depends and Depends
+      - Create new needed packages (open-iscsi userland library)
+    - [f4f0987] Update copyright and fix lintian complains
+    - [37cef72] status command defined to show active sessions
+    - [4b93bb8] Remove old post-installation workaround and update path
+    - [0a5ec77] Remove rest of unneeded old update path (abort-upgrade)
+    - [a4762f0] Remove rest of unneeded old update path (upgrade)
+    - [6915ce5] iscsid.service is needed whenever iscsi disks are added
+    - [1002212] Update tests dependencies
+    - [d3b6647] Workaround for Flex 2.5.35 is not needed anymore
+    - [396b15a] Use debian/rules for dh overrides (easier to manage)
+    - [3427d74] Remove old openssl patch to licensing issue:
+      - d/p/debian/dont-link-against-openssl.patch
+    - [dc3cfaf] Drop unneeded patches for v2.1.1:
+      - bugfixes/no-make-clean-kernel.patch (2.0.875-47-gb4a1cef)
+      - debian/var-run-lock.patch (2.0.877-27-g0f30033)
+      - debian/udeb-without-libmount.patch (libmount1-dbgsym:2.35.1-5)
+      - bugfixes/need_iscsiuio_for_hardware_offload.patch (2.0.873-214-gf780a82)
+      - bugfixes/move_offload_discovery_to_fw_get_targets.patch (2.0.873-215-g3ae35d3)
+      - bugfixes/fix_iscsiuio_long_options.patch (2.0.873-216-g0685179)
+      - security/Check-for-root-peer-user-for-iscsiuio-IPC.patch (2.0.875-14-ge313bd6)
+      - security/iscsiuio-should-ignore-bogus-iscsid-broadcast-packet.patch (2.0.875-15-gb9c3368)
+      - security/Ensure-all-fields-in-iscsiuio-IPC-response-are-set.patch (2.0.875-16-gbe58eed)
+      - security/Do-not-double-close-IPC-file-stream-to-iscsid.patch (2.0.875-17-g5504053)
+      - security/Ensure-strings-from-peer-are-copied-correctly.patch (2.0.875-18-g85f647c)
+      - security/Skip-useless-strcopy-and-validate-CIDR-length.patch (2.0.875-19-ga7a9613)
+      - security/Check-iscsiuio-ping-data-length-for-validity.patch (2.0.875-20-g59ede2c)
+      - include-sys-sysmacros.h-to-properly-define-minor.patch (2.0.875-10-g6d68ef5)
+
+  [ Ritesh Raj Sarraf ]
+  * [1078a22] Set debian branch to experimental
+  * [59b9ef1] Install docs for the new libopeniscsiusr package
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 23 Jun 2020 20:38:47 +0530
 
 open-iscsi (2.0.874-7) unstable; urgency=medium
 
@@ -448,7 +689,7 @@ open-iscsi (2.0.872+git0.6676a1cf-2) unstable; urgency=low
 open-iscsi (2.0.872+git0.6676a1cf-1) experimental; urgency=low
 
   [ Ritesh Raj Sarraf ]
-  * New Upstream git snapshot (Closes: #645752) 
+  * New Upstream git snapshot (Closes: #645752)
   * [ce26f7c] Imported Upstream version 2.0.872+git0.6676a1cf
   * [9ad08d7] also include iscsitart in the udeb
   * [bc79ad2] refresh patch debian/patches/spelling-error-fixes.patch
@@ -472,13 +713,13 @@ open-iscsi (2.0.872+git0.6676a1cf-1) experimental; urgency=low
 
 open-iscsi (2.0.872-2) unstable; urgency=low
 
-  * Upload to unstable 
+  * Upload to unstable
 
  -- Ritesh Raj Sarraf <rrs@debian.org>  Wed, 14 Sep 2011 14:26:00 +0530
 
 open-iscsi (2.0.872-1) experimental; urgency=low
 
-  * New Upstream Release  
+  * New Upstream Release
   * [cccd5a9] Use udevadm to check for existense of udev.
     Thanks to Marco d'Itri (Closes: #622209)
   * [ddb81e4] Drop patches, merged upstream
@@ -502,13 +743,13 @@ open-iscsi (2.0.871.3-6) unstable; urgency=low
 
 open-iscsi (2.0.871.3-5) unstable; urgency=low
 
-  * Last upload was incorrect. Really upload to unstable 
+  * Last upload was incorrect. Really upload to unstable
 
  -- Ritesh Raj Sarraf <rrs@debian.org>  Sat, 12 Feb 2011 02:00:34 +0530
 
 open-iscsi (2.0.871.3-4) unstable; urgency=low
 
-  * Reupload to unstable 
+  * Reupload to unstable
 
  -- Ritesh Raj Sarraf <rrs@debian.org>  Thu, 10 Feb 2011 20:17:07 +0530
 
@@ -516,14 +757,14 @@ open-iscsi (2.0.871.3-3) experimental; urgency=low
 
   * Install iscsid.conf with 0600 permission as it can contain passwords
     (Closes: #472965)
-  * Provide an example for iSCSI root installation (Closes: #492358) 
+  * Provide an example for iSCSI root installation (Closes: #492358)
   * Add support to enable multiple session to the iSCSI Target in the
     initramfs. Thanks to Norbert Tretkowski for the patch.
-    (Closes: #598773) 
+    (Closes: #598773)
   * Add patch to support NICs that have native iSCSI support. Thanks to
-    Bjoern Metzdorf for the patch. (Closes: #514924) 
+    Bjoern Metzdorf for the patch. (Closes: #514924)
   * cherry pick commit f0b670c0 from upstrem (Closes: #603990)
-  * Bump Standards Version (No changes required) 
+  * Bump Standards Version (No changes required)
 
  -- Ritesh Raj Sarraf <rrs@debian.org>  Wed, 05 Jan 2011 13:43:42 +0545
 
@@ -533,23 +774,23 @@ open-iscsi (2.0.871.3-2) unstable; urgency=low
     + 003_Fix-CVE-2009-1297.patch
     + 004_make-iscsistart-a-dynamic-binary.patch
   * Add some explanation about initiatorname.iscsi into README.Debian
-    (Closes: #507003) 
+    (Closes: #507003)
   * Fix double variable assignment in initramfs.local-top. Thanks to Aurelien
-    Jarno (Closes: #576786) 
+    Jarno (Closes: #576786)
   * Document the odd hang behavior during iSCSI login phase when using 32 bit
-    open-iscsi with 64 bit kernel 
+    open-iscsi with 64 bit kernel
   * Change address to my official Debian address and remove the DMUA flag
-  * Handle iSCSI LVM devices and devices marked _netdev (Closes: #498616) 
-  * Switch to 3.0 (quilt) source format 
+  * Handle iSCSI LVM devices and devices marked _netdev (Closes: #498616)
+  * Switch to 3.0 (quilt) source format
 
  -- Ritesh Raj Sarraf <rrs@debian.org>  Fri, 11 Jun 2010 12:33:02 +0530
 
 open-iscsi (2.0.871.3-1) unstable; urgency=low
 
-  * New upstream release (Closes: #564012, #566511) 
+  * New upstream release (Closes: #564012, #566511)
   * When open-iscsi service is asked to stop, attempt to umount all iSCSI
-    devices. On failure, bail out (Closes: #501580, #499126) 
-  * Add debian/source/format specifying the current source format 
+    devices. On failure, bail out (Closes: #501580, #499126)
+  * Add debian/source/format specifying the current source format
 
  -- Ritesh Raj Sarraf <rrs@researchut.com>  Wed, 24 Mar 2010 21:44:38 +0530
 
@@ -748,4 +989,3 @@ open-iscsi (1.0.485-0unreleased) dapper; urgency=low
   * Put database into /var/lib/open-iscsi
 
  -- Philipp Hug <debian@hug.cx>  Mon,  6 Mar 2006 19:20:17 +0000
-

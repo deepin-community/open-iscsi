@@ -31,15 +31,33 @@
 #include <string.h>
 #include <sys/utsname.h>
 #include <sys/time.h>
+#include <getopt.h>
+#include <stdbool.h>
 
 #include "md5.h"
 
 #define RANDOM_NUM_GENERATOR	"/dev/urandom"
 
+#define DEFAULT_PREFIX		"iqn.2016-04.com.open-iscsi"
+
+/* iSCSI names have a maximum length of 223 characters, we reserve 13 to append
+ * a seperator and 12 characters (6 random bytes in hex representation) */
+#define PREFIX_MAX_LEN 210
+
+static void usage(void)
+{
+	fprintf(stderr, "Usage: iscsi-iname [OPTIONS]\n");
+	fprintf(stderr, "Where OPTIONS are from:\n");
+	fprintf(stderr, "    -p/--prefix <prefix>          -- set IQN prefix [%s]\n",
+			DEFAULT_PREFIX);
+	fprintf(stderr, "    -g/--generate-iname-prefix    -- generate the InitiatorName= prefix\n");
+	fprintf(stderr, "where <prefix> has max length of %d\n",
+		PREFIX_MAX_LEN);
+}
+
 int
 main(int argc, char *argv[])
 {
-	char iname[256];
 	struct timeval time;
 	struct utsname system_info;
 	long hostid;
@@ -49,38 +67,57 @@ main(int argc, char *argv[])
 	unsigned char entropy[16];
 	int e;
 	int fd;
-	char *prefix;
+	char *prefix = DEFAULT_PREFIX;
+	int c;
+	char *short_options = "p:gh";
+	struct option const long_options[] = {
+		{"help", no_argument, NULL, 'h'},
+		{"prefix", required_argument, NULL, 'p'},
+		{"generate-iname-prefix", no_argument, NULL, 'g'},
+		{NULL, 0, NULL, 0}
+	};
+	bool generate_iname_prefix = false;
 
 	/* initialize */
-	memset(iname, 0, sizeof (iname));
 	memset(digest, 0, sizeof (digest));
 	memset(&context, 0, sizeof (context));
 	MD5Init(&context);
 
 	/* take a prefix if given, otherwise use a default. */
-	if (argc > 1 && argv[1]) {
-		prefix = argv[1];
-		if (( strcmp(prefix, "-h") == 0 ) ||
-		    ( strcmp(prefix, "--help") == 0 )) {
-			printf("\nGenerates a unique iSCSI node name "
-			       "on every invocation.\n");
+	while ((c = getopt_long(argc, argv, short_options, long_options, NULL)) >= 0) {
+		switch (c) {
+		case 'p':
+			prefix = optarg;
+			if (strnlen(prefix, PREFIX_MAX_LEN + 1) > PREFIX_MAX_LEN) {
+				fprintf(stderr, "error: prefix too long\n");
+				usage();
+				exit(1);
+			}
+			break;
+		case 'h':
+			usage();
 			exit(0);
-		} else if ( strcmp(prefix, "-p") == 0 ) {
-			prefix = argv[2];
-		} else {
-			printf("\nUsage: iscsi-iname [-h | --help | "
-			       "-p <prefix>]\n");
-			exit(0);
+		case 'g':
+			generate_iname_prefix = true;
+			break;
+		default:
+		case '?':
+			usage();
+			exit(1);
 		}
-	} else {
-		prefix = "iqn.2005-03.org.open-iscsi";
+	}
+	if (optind < argc) {
+		fprintf(stderr, "unknown argument(s)\n");
+		usage();
+		exit(1);
 	}
 
 	/* try to feed some entropy from the pool to MD5 in order to get
 	 * uniqueness properties
 	 */
 
-	if ((fd = open(RANDOM_NUM_GENERATOR, O_RDONLY))) {
+	fd = open(RANDOM_NUM_GENERATOR, O_RDONLY);
+	if (fd != -1) {
 		e = read(fd, &entropy, 16);
 		if (e >= 1)
 			MD5Update(&context, (md5byte *)entropy, e);
@@ -125,17 +162,17 @@ main(int argc, char *argv[])
 	 * good as any other).
 	 */
 
-	if ((fd = open(RANDOM_NUM_GENERATOR, O_RDONLY))) {
+	fd = open(RANDOM_NUM_GENERATOR, O_RDONLY);
+	if (fd != -1) {
 		if (read(fd, entropy, 1) == 1)
 			bytes = &digest[(entropy[0] % (sizeof(digest) - 6))];
 		close(fd);
 	}
 
 	/* print the prefix followed by 6 bytes of the MD5 hash */
-	sprintf(iname, "%s:%x%x%x%x%x%x", prefix,
+	printf("%s%s:%x%x%x%x%x%x\n",
+		generate_iname_prefix ? "InitiatorName=" : "",
+		prefix,
 		bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
-
-	iname[sizeof (iname) - 1] = '\0';
-	printf("%s\n", iname);
 	return 0;
 }

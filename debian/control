@@ -3,65 +3,134 @@ Section: net
 Priority: optional
 Maintainer: Debian iSCSI Maintainers <open-iscsi@packages.debian.org>
 Uploaders: Ritesh Raj Sarraf <rrs@debian.org>,
-           Christian Seiler <christian@iwakd.de>
-Build-Depends: autotools-dev,
-               bison,
+           Christian Seiler <christian@iwakd.de>,
+           Chris Hofstaedtler <zeha@debian.org>
+Build-Depends: bison,
                bzip2,
-               debhelper (>= 9),
-               dh-autoreconf,
+               debhelper-compat (= 13),
                dh-exec,
-               dh-systemd,
-               dpkg-dev (>= 1.16.1~),
+               dpkg-dev (>= 1.19),
                flex,
-               libisns-dev (>= 0.96-4~),
+               libisns-dev,
                libmount-dev,
-               po-debconf
-Standards-Version: 3.9.8
+               pkg-config,
+               libkmod-dev,
+               libsystemd-dev,
+               libssl-dev
+Standards-Version: 4.5.1
 Vcs-Git: https://salsa.debian.org/linux-blocks-team/open-iscsi.git
-Vcs-Browser: https://salsa.debian.org/linux-blocks-team/open-iscsi.git
-Homepage: http://www.open-iscsi.com/
-Testsuite: autopkgtest
+Vcs-Browser: https://salsa.debian.org/linux-blocks-team/open-iscsi
+Homepage: https://www.open-iscsi.com/
+Rules-Requires-Root: no
 
 Package: open-iscsi
 Architecture: linux-any
-Depends: udev, ${misc:Depends}, ${shlibs:Depends}, lsb-base (>= 3.0-6)
-Recommends: ${busybox:Recommends}
+Multi-Arch: foreign
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+         libopeniscsiusr,
+         udev
+Recommends: ${busybox:Recommends}, finalrd (>= 3)
 Pre-Depends: debconf | debconf-2.0
 Description: iSCSI initiator tools
- Open-iSCSI is a high-performance, transport independent, multi-platform
- implementation of the RFC3720 Internet Small Computer Systems Interface
- (iSCSI).
+ The Open-iSCSI project is a high-performance, transport independent,
+ multi-platform implementation of RFC3720 iSCSI.
  .
- Open-iSCSI is partitioned into user and kernel parts, where the kernel
- portion implements the iSCSI data path (i.e. iSCSI Read and iSCSI Write).
- The userspace contains the entire control plane:
-  * Configuration Manager;
-  * iSCSI Discovery;
-  * Login and Logout processing;
-  * Connection level error processing;
-  * Nop-In and Nop-Out handling;
-  * (in the future) Text processing, iSNS, SLP, Radius, etc.
+ Open-iSCSI is partitioned into user and kernel parts.
+ .
+ The kernel portion of Open-iSCSI is a from-scratch code
+ licensed under GPL. The kernel part implements iSCSI data path
+ (that is, iSCSI Read and iSCSI Write), and consists of three
+ loadable modules: scsi_transport_iscsi.ko, libiscsi.ko and iscsi_tcp.ko.
+ .
+ User space contains the entire control plane: configuration
+ manager, iSCSI Discovery, Login and Logout processing,
+ connection-level error processing, Nop-In and Nop-Out handling,
+ and (in the future:) Text processing, iSNS, SLP, Radius, etc.
+ .
+ The user space Open-iSCSI consists of a daemon process called
+ iscsid, and a management utility iscsiadm.
  .
  This package includes a daemon, iscsid, and a management utility,
  iscsiadm.
 
+Package: libopeniscsiusr
+Architecture: linux-any
+Depends: ${misc:Depends},
+         ${shlibs:Depends}
+Enhances: open-iscsi
+Description: iSCSI userspace library
+ The Open-iSCSI project is a high-performance, transport independent,
+ multi-platform implementation of RFC3720 iSCSI.
+ .
+ Open-iSCSI is partitioned into user and kernel parts.
+ .
+ The kernel portion of Open-iSCSI is a from-scratch code
+ licensed under GPL. The kernel part implements iSCSI data path
+ (that is, iSCSI Read and iSCSI Write), and consists of three
+ loadable modules: scsi_transport_iscsi.ko, libiscsi.ko and iscsi_tcp.ko.
+ .
+ User space contains the entire control plane: configuration
+ manager, iSCSI Discovery, Login and Logout processing,
+ connection-level error processing, Nop-In and Nop-Out handling,
+ and (in the future:) Text processing, iSNS, SLP, Radius, etc.
+ .
+ The user space Open-iSCSI consists of a daemon process called
+ iscsid, and a management utility iscsiadm.
+ .
+ This package contains the iSCSI userspace library.
+
+Package: libopeniscsiusr-dev
+Architecture: all
+Depends: ${misc:Depends},
+         libopeniscsiusr
+Enhances: open-iscsi
+Description: iSCSI userspace library headers
+ The Open-iSCSI project is a high-performance, transport independent,
+ multi-platform implementation of RFC3720 iSCSI.
+ .
+ Open-iSCSI is partitioned into user and kernel parts.
+ .
+ The kernel portion of Open-iSCSI is a from-scratch code
+ licensed under GPL. The kernel part implements iSCSI data path
+ (that is, iSCSI Read and iSCSI Write), and consists of three
+ loadable modules: scsi_transport_iscsi.ko, libiscsi.ko and iscsi_tcp.ko.
+ .
+ User space contains the entire control plane: configuration
+ manager, iSCSI Discovery, Login and Logout processing,
+ connection-level error processing, Nop-In and Nop-Out handling,
+ and (in the future:) Text processing, iSNS, SLP, Radius, etc.
+ .
+ The user space Open-iSCSI consists of a daemon process called
+ iscsid, and a management utility iscsiadm.
+ .
+ This package contains the iSCSI userspace library headers.
+
 Package: iscsiuio
 Architecture: linux-any
-Depends: udev, ${misc:Depends}, ${shlibs:Depends}
+Multi-Arch: foreign
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+         libopeniscsiusr,
+         udev
 Enhances: open-iscsi
 Description: iSCSI offloading daemon for QLogic devices
- Open-iSCSI is a high-performance, transport independent, multi-platform
- implementation of the RFC3720 Internet Small Computer Systems Interface
- (iSCSI).
+ The Open-iSCSI project is a high-performance, transport independent,
+ multi-platform implementation of RFC3720 iSCSI.
  .
- This package contains the userspace offloading daemon, for use with
- QLogic (formerly Broadcom) NetXtreme II hardware, as supported by the
- 'bnx2' and 'bnx2x' drivers, in conjunction with the 'bnx2i' driver.
+ This tool is to be used in conjunction with the QLogic NetXtreme II Linux
+ driver (Kernel module name: 'bnx2' and 'bnx2x'), QLogic CNIC driver,
+ and the QLogic iSCSI driver (Kernel module name: 'bnx2i').
  .
- The following network controllers are supported:
-  bnx2:  BCM5706, BCM5708, BCM5709 devices
-  bnx2x: BCM57710, BCM57711, BCM57711E, BCM57712, BCM57712E, BCM57800,
-         BCM57810, BCM57840
+ This user space tool is used in conjunction with the following
+ QLogic Network Controllers:
+   bnx2:  BCM5706, BCM5708, BCM5709 devices
+   bnx2x: BCM57710, BCM57711, BCM57711E, BCM57712, BCM57712E,
+          BCM57800, BCM57810, BCM57840 devices
+ .
+ This utility will provide the ARP and DHCP functionality for the iSCSI
+ offload. The communication to the driver is done via Userspace I/O (Kernel
+ module name 'uio').
  .
  This package is required to offload iSCSI onto these devices.
 
@@ -73,11 +142,11 @@ Package: open-iscsi-udeb
 Architecture: amd64 arm64 armhf i386 ia64 mips mipsel powerpc ppc64 ppc64el s390x
 Section: debian-installer
 Package-Type: udeb
-Depends: scsi-modules, ${misc:Depends}, ${shlibs:Depends}
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+         scsi-modules
 Description: Configure iSCSI
- Open-iSCSI is a high-performance, transport independent, multi-platform
- implementation of the RFC3720 Internet Small Computer Systems Interface
- (iSCSI).
+ The Open-iSCSI project is a high-performance, transport independent,
+ multi-platform implementation of RFC3720 iSCSI.
  .
  This is the minimal package (udeb) used by debian-installer.
-

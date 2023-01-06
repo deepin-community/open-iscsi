@@ -62,14 +62,14 @@ iscsi_add_text(struct iscsi_hdr *pdu, char *data, int max_data_length,
 	}
 
 	/* param */
-	strncpy(text, param, param_len);
+	memcpy(text, param, param_len);
 	text += param_len;
 
 	/* separator */
 	*text++ = ISCSI_TEXT_SEPARATOR;
 
 	/* value */
-	strncpy(text, value, value_len);
+	memcpy(text, value, value_len);
 	text += value_len;
 
 	/* NUL */
@@ -399,7 +399,7 @@ get_op_params_text_keys(iscsi_session_t *session, int cid,
 			 * what the target gave us.
 			 */
 			if (!conn_rec->iscsi.MaxXmitDataSegmentLength ||
-			    tgt_max_xmit < conn->max_xmit_dlength)
+			    tgt_max_xmit < (int)conn->max_xmit_dlength)
 				conn->max_xmit_dlength = tgt_max_xmit;
 		}
 		text = value_end;
@@ -524,14 +524,9 @@ get_op_params_text_keys(iscsi_session_t *session, int cid,
 		text = value_end;
 	} else if (iscsi_find_key_value("MaxOutstandingR2T", text, end, &value,
 					 &value_end)) {
-		if (session->type == ISCSI_SESSION_TYPE_NORMAL) {
-			if (strcmp(value, "1")) {
-				log_error("Login negotiation "
-					       "failed, can't accept Max"
-					       "OutstandingR2T %s", value);
-				return LOGIN_NEGOTIATION_FAILED;
-			}
-		} else
+		if (session->type == ISCSI_SESSION_TYPE_NORMAL)
+			session->max_r2t = strtoul(value, NULL, 0);
+		else
 			session->irrelevant_keys_bitmap |=
 						IRRELEVANT_MAXOUTSTANDINGR2T;
 		text = value_end;
@@ -629,7 +624,7 @@ check_security_stage_status(iscsi_session_t *session,
 	case AUTH_STATUS_ERROR:
 	case AUTH_STATUS_FAIL:
 	default:
-		if (acl_get_dbg_status(auth_client, &debug_status) !=
+		if (acl_get_dbg_status(auth_client, &debug_status) ==
 		    AUTH_STATUS_NO_ERROR)
 			log_error("Login authentication failed "
 				       "with target %s, %s",
@@ -662,7 +657,7 @@ iscsi_process_login_response(iscsi_session_t *session, int cid,
 	struct iscsi_acl *auth_client;
 	iscsi_conn_t *conn = &session->conn[cid];
 
-	auth_client = (session->auth_buffers && session->num_auth_buffers) ?
+	auth_client = (session->num_auth_buffers > 0) ?
 		(struct iscsi_acl *)session->auth_buffers[0].address : NULL;
 
 	end = text + ntoh24(login_rsp->dlength) + 1;
@@ -810,8 +805,9 @@ add_params_normal_session(iscsi_session_t *session, struct iscsi_hdr *pdu,
 		return 0;
 
 	/* these we must have */
+	sprintf(value, "%d", session->max_r2t);
 	if (!iscsi_add_text(pdu, data, max_data_length,
-			    "MaxOutstandingR2T", "1"))
+			    "MaxOutstandingR2T", value))
 		return 0;
 	if (!iscsi_add_text(pdu, data, max_data_length,
 			    "MaxConnections", "1"))
@@ -1139,7 +1135,7 @@ iscsi_make_login_pdu(iscsi_session_t *session, int cid, struct iscsi_hdr *hdr,
 	struct iscsi_acl *auth_client;
 	iscsi_conn_t *conn = &session->conn[cid];
 
-	auth_client = (session->auth_buffers && session->num_auth_buffers) ?
+	auth_client = (session->num_auth_buffers > 0) ?
 		(struct iscsi_acl *)session->auth_buffers[0].address : NULL;
 
 	/* initialize the PDU header */
@@ -1174,7 +1170,7 @@ iscsi_make_login_pdu(iscsi_session_t *session, int cid, struct iscsi_hdr *hdr,
 				return 0;
 		}
 
-		if ((session->target_name && session->target_name[0]) &&
+		if ((session->target_name[0] != '\0') &&
 		    (session->type == ISCSI_SESSION_TYPE_NORMAL)) {
 			if (!iscsi_add_text(hdr, data, max_data_length,
 			    "TargetName", session->target_name))
@@ -1252,17 +1248,28 @@ check_for_authentication(iscsi_session_t *session,
 		return LOGIN_FAILED;
 	}
 
-	if (session->username &&
+	if ((session->username[0] != '\0') &&
 	    (acl_set_user_name(auth_client, session->username) !=
-	    AUTH_STATUS_NO_ERROR)) {
+	     AUTH_STATUS_NO_ERROR)) {
 		log_error("Couldn't set username");
 		goto end;
 	}
 
-	if (session->password && (acl_set_passwd(auth_client,
-	    session->password, session->password_length) !=
-		 AUTH_STATUS_NO_ERROR)) {
+	if ((session->password[0] != '\0') &&
+       	    (acl_set_passwd(auth_client, session->password, session->password_length) !=
+	     AUTH_STATUS_NO_ERROR)) {
 		log_error("Couldn't set password");
+		goto end;
+	}
+
+	int value_list[AUTH_CHAP_ALG_MAX_COUNT];
+
+	if (acl_set_chap_alg_list(auth_client,
+				acl_init_chap_digests(value_list,
+					session->chap_algs,
+					AUTH_CHAP_ALG_MAX_COUNT),
+				value_list) != AUTH_STATUS_NO_ERROR) {
+		log_error("Couldn't set CHAP algorithm list");
 		goto end;
 	}
 
@@ -1359,7 +1366,7 @@ iscsi_login_begin(iscsi_session_t *session, iscsi_login_context_t *c)
 	conn->current_stage = ISCSI_INITIAL_LOGIN_STAGE;
 	conn->partial_response = 0;
 
-	if (session->auth_buffers && session->num_auth_buffers) {
+	if (session->num_auth_buffers > 0) {
 		c->ret = check_for_authentication(session, c->auth_client);
 		if (c->ret != LOGIN_OK)
 			return 1;

@@ -23,18 +23,20 @@
 #define IDBM_H
 
 #include <stdio.h>
+#include <stdbool.h>
 #include <sys/types.h>
 #include "initiator.h"
 #include "config.h"
 #include "list.h"
 #include "flashnode.h"
 
-#define NODE_CONFIG_DIR		ISCSI_CONFIG_ROOT"nodes"
-#define SLP_CONFIG_DIR		ISCSI_CONFIG_ROOT"slp"
-#define ISNS_CONFIG_DIR		ISCSI_CONFIG_ROOT"isns"
-#define STATIC_CONFIG_DIR	ISCSI_CONFIG_ROOT"static"
-#define FW_CONFIG_DIR		ISCSI_CONFIG_ROOT"fw"
-#define ST_CONFIG_DIR		ISCSI_CONFIG_ROOT"send_targets"
+#define NODE_CONFIG_DIR		ISCSI_DB_ROOT"/nodes"
+#define SLP_CONFIG_DIR		ISCSI_DB_ROOT"/slp"
+#define ISNS_CONFIG_DIR		ISCSI_DB_ROOT"/isns"
+#define STATIC_CONFIG_DIR	ISCSI_DB_ROOT"/static"
+#define FW_CONFIG_DIR		ISCSI_DB_ROOT"/fw"
+#define ST_CONFIG_DIR		ISCSI_DB_ROOT"/send_targets"
+
 #define ST_CONFIG_NAME		"st_config"
 #define ISNS_CONFIG_NAME	"isns_config"
 
@@ -44,6 +46,8 @@
 #define TYPE_UINT8	3
 #define TYPE_UINT16	4
 #define TYPE_UINT32	5
+#define TYPE_INT_LIST	6
+
 #define MAX_KEYS	256   /* number of keys total(including CNX_MAX) */
 #define NAME_MAXVAL	128   /* the maximum length of key name */
 #define VALUE_MAXVAL	256   /* the maximum length of 223 bytes in the RFC. */
@@ -91,22 +95,22 @@ struct user_param {
 };
 
 typedef int (idbm_iface_op_fn)(void *data, node_rec_t *rec);
-typedef int (idbm_portal_op_fn)(int *found,  void *data,
-				char *targetname, int tpgt, char *ip, int port);
+typedef int (idbm_portal_op_fn)(int *found,  void *data, char *targetname,
+				int tpgt, char *ip, int port, bool ruw_lock);
 typedef int (idbm_node_op_fn)(int *found, void *data,
-			      char *targetname);
+			      char *targetname, bool ruw_lock);
 
 struct rec_op_data {
 	void *data;
 	node_rec_t *match_rec;
 	idbm_iface_op_fn *fn;
 };
-extern int idbm_for_each_portal(int *found, void *data,
-				idbm_portal_op_fn *fn, char *targetname);
+extern int idbm_for_each_portal(int *found, void *data, idbm_portal_op_fn *fn,
+				char *targetname, bool ruw_lock);
 extern int idbm_for_each_node(int *found, void *data,
-			      idbm_node_op_fn *fn);
+			      idbm_node_op_fn *fn, bool ruw_lock);
 extern int idbm_for_each_rec(int *found, void *data,
-			     idbm_iface_op_fn *fn);
+			     idbm_iface_op_fn *fn, bool ruw_lock);
 
 
 typedef int (idbm_drec_op_fn)(void *data, discovery_rec_t *drec);
@@ -117,7 +121,6 @@ extern int idbm_init(idbm_get_config_file_fn *fn);
 
 extern void idbm_node_setup_from_conf(node_rec_t *rec);
 extern void idbm_terminate(void);
-extern int idbm_print_iface_info(void *data, struct iface_rec *iface);
 extern int idbm_print_node_info(void *data, node_rec_t *rec);
 extern int idbm_print_node_flat(void *data, node_rec_t *rec);
 extern int idbm_print_node_tree(struct node_rec *last_rec, struct node_rec *rec,
@@ -140,16 +143,18 @@ extern int idbm_add_discovery(discovery_rec_t *newrec);
 extern void idbm_sendtargets_defaults(struct iscsi_sendtargets_config *cfg);
 extern void idbm_isns_defaults(struct iscsi_isns_config *cfg);
 extern void idbm_slp_defaults(struct iscsi_slp_config *cfg);
+extern int idbm_session_autoscan(struct iscsi_session *session);
 extern int idbm_discovery_read(discovery_rec_t *rec, int type, char *addr,
 				int port);
 extern int idbm_rec_read(node_rec_t *out_rec, char *target_name,
 			 int tpgt, char *addr, int port,
-			 struct iface_rec *iface);
+			 struct iface_rec *iface, bool disable_lock);
 extern int idbm_node_set_rec_from_param(struct list_head *params,
 					node_rec_t *rec, int verify);
 extern int idbm_node_set_param(void *data, node_rec_t *rec);
 extern int idbm_discovery_set_param(void *data, discovery_rec_t *rec);
 struct user_param *idbm_alloc_user_param(char *name, char *value);
+void idbm_free_user_param(struct user_param *param);
 extern void idbm_node_setup_defaults(node_rec_t *rec);
 extern struct node_rec *idbm_find_rec_in_list(struct list_head *rec_list,
 					      char *targetname, char *addr,

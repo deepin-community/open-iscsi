@@ -1,0 +1,6 @@
+usr/share/man/man8/iscsid.8
+usr/share/man/man8/iscsistart.8
+usr/share/man/man8/iscsi-gen-initiatorname.8
+usr/share/man/man8/iscsiadm.8
+usr/share/man/man8/iscsi_discovery.8
+usr/share/man/man8/iscsi-iname.8

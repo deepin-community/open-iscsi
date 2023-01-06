@@ -372,17 +372,29 @@ uint32_t iscsi_sysfs_get_host_no_from_hwaddress(char *hwaddress, int *rc)
 
 	info = calloc(1, sizeof(*info));
 	if (!info) {
+		log_debug(4, "No memory for host info");
 		*rc = ISCSI_ERR_NOMEM;
 		return -1;
 	}
-	strcpy(info->iface.hwaddress, hwaddress);
+	/* make sure there is room for the MAC address plus NULL terminator */
+	if (strlen(hwaddress) > (ISCSI_HWADDRESS_BUF_SIZE - 1)) {
+		log_debug(4, "HW Address \"%s\" too long (%d max)",
+				hwaddress, ISCSI_HWADDRESS_BUF_SIZE-1);
+		*rc = ISCSI_ERR_INVAL;
+		goto dun;
+	}
+	strncpy(info->iface.hwaddress, hwaddress, ISCSI_HWADDRESS_BUF_SIZE-1);
 
 	local_rc = iscsi_sysfs_for_each_host(info, &nr_found,
 					__get_host_no_from_hwaddress);
 	if (local_rc == 1)
 		host_no = info->host_no;
-	else
+	else {
+		log_debug(4, "Host not found from HW Address \"%s\"",
+				hwaddress);
 		*rc = ISCSI_ERR_HOST_NOT_FOUND;
+	}
+dun:
 	free(info);
 	return host_no;
 }
@@ -464,7 +476,7 @@ int iscsi_sysfs_get_flashnode_info(struct flashnode_rec *fnode,
 		log_debug(7, "could not get transport name for host%d",
 			  host_no);
 	else
-		strncpy(fnode->transport_name, t->name,
+		strlcpy(fnode->transport_name, t->name,
 			ISCSI_TRANSPORT_NAME_MAXLEN);
 
 	snprintf(sess_id, sizeof(sess_id), ISCSI_FLASHNODE_SESS, host_no,
@@ -706,6 +718,11 @@ static int iscsi_sysfs_read_boot(struct iface_rec *iface, char *session)
 		log_debug(5, "could not read %s/%s/subnet", boot_root,
 			  boot_nic);
 
+	if (sysfs_get_str(boot_nic, boot_root, "gateway",
+			  iface->gateway, NI_MAXHOST))
+		log_debug(5, "could not read %s/%s/gateway", boot_root,
+			  boot_nic);
+
 	log_debug(5, "sysfs read boot returns %s/%s/ vlan = %d subnet = %s",
 		  boot_root, boot_nic, iface->vlan_id, iface->subnet_mask);
 	return 0;
@@ -839,7 +856,7 @@ static int iscsi_sysfs_read_iface(struct iface_rec *iface, int host_no,
 		}
 	}
 
-	if (session && t->template->use_boot_info)
+	if (session && t && t->template->use_boot_info)
 		iscsi_sysfs_read_boot(iface, session);
 
 	if (!iface_kern_id)
@@ -1091,6 +1108,7 @@ static int iscsi_sysfs_read_iface(struct iface_rec *iface, int host_no,
 	if (sscanf(iface_kern_id, "ipv%d-iface-%u-%u", &iface_type,
 		   &tmp_host_no, &iface_num) == 3)
 		iface->iface_num = iface_num;
+
 done:
 	if (ret)
 		return ISCSI_ERR_SYSFS_LOOKUP;
@@ -1153,7 +1171,7 @@ int iscsi_sysfs_for_each_iface_on_host(void *data, uint32_t host_no,
 	int rc = 0, i, n;
 	struct iface_rec iface;
         char devpath[PATH_SIZE];
-        char sysfs_path[PATH_SIZE];
+        char sysfs_dev_iscsi_iface_path[PATH_SIZE];
         char id[NAME_SIZE];
 
         snprintf(id, sizeof(id), "host%u", host_no);
@@ -1163,11 +1181,11 @@ int iscsi_sysfs_for_each_iface_on_host(void *data, uint32_t host_no,
                 return ISCSI_ERR_SYSFS_LOOKUP;
         }
 
-	sprintf(sysfs_path, "/sys");
-	strlcat(sysfs_path, devpath, sizeof(sysfs_path));
-	strlcat(sysfs_path, "/iscsi_iface", sizeof(sysfs_path));
+	sprintf(sysfs_dev_iscsi_iface_path, "/sys");
+	strlcat(sysfs_dev_iscsi_iface_path, devpath, sizeof(sysfs_dev_iscsi_iface_path));
+	strlcat(sysfs_dev_iscsi_iface_path, "/iscsi_iface", sizeof(sysfs_dev_iscsi_iface_path));
 
-	n = scandir(sysfs_path, &namelist, trans_filter, alphasort);
+	n = scandir(sysfs_dev_iscsi_iface_path, &namelist, trans_filter, alphasort);
 	if (n <= 0)
 		/* older kernels or some drivers will not have ifaces */
 		return 0;
@@ -1398,8 +1416,8 @@ int iscsi_sysfs_get_sessioninfo_by_id(struct session_info *info, char *session)
 	log_debug(7, "found targetname %s address %s pers address %s port %d "
 		 "pers port %d driver %s iface name %s ipaddress %s "
 		 "netdev %s hwaddress %s iname %s",
-		  info->targetname, info->address ? info->address : "NA",
-		  info->persistent_address ? info->persistent_address : "NA",
+		  info->targetname, info->address[0] ? info->address : "NA",
+		  info->persistent_address[0] ? info->persistent_address : "NA",
 		  info->port, info->persistent_port, info->iface.transport_name,
 		  info->iface.name, info->iface.ipaddress,
 		  info->iface.netdev, info->iface.hwaddress,
@@ -1420,6 +1438,7 @@ int iscsi_sysfs_for_each_session(void *data, int *nr_found,
 	if (!info)
 		return ISCSI_ERR_NOMEM;
 
+	info->iscsid_req_tmo = ISCSID_RESP_POLL_TIMEOUT;
 	n = scandir(ISCSI_SESSION_DIR, &namelist, trans_filter,
 		    alphasort);
 	if (n <= 0)
@@ -1505,6 +1524,51 @@ int iscsi_sysfs_for_each_session(void *data, int *nr_found,
 free_info:
 	free(info);
 	return rc;
+}
+
+/*
+ * count the number of sessions -- a much-simplified
+ * version of iscsi_sysfs_for_each_session
+ *
+ * TODO: return an array of the session info we find, for use
+ * by iscsi_sysfs_for_each_session(), so it doesn't have to
+ * do it all over again
+ */
+int iscsi_sysfs_count_sessions(void)
+{
+	struct dirent **namelist = NULL;
+	int n, i;
+	struct session_info *info;
+
+
+	info = calloc(1, sizeof(*info));
+	if (!info)
+		/* no sessions found */
+		return 0;
+	info->iscsid_req_tmo = -1;
+
+	n = scandir(ISCSI_SESSION_DIR, &namelist, trans_filter, alphasort);
+	if (n <= 0)
+		/* no sessions found */
+		goto free_info;
+
+	/*
+	 * try to get session info for each session found, but ignore
+	 * errors if any since it may be a race condition
+	 */
+	for (i = 0; i < n; i++)
+		if (iscsi_sysfs_get_sessioninfo_by_id(info,
+					namelist[i]->d_name) != 0)
+			log_warning("could not find session info for %s",
+					namelist[i]->d_name);
+
+	for (i = 0; i < n; i++)
+		free(namelist[i]);
+	free(namelist);
+
+free_info:
+	free(info);
+	return n;
 }
 
 int iscsi_sysfs_get_session_state(char *state, int sid)
@@ -1729,8 +1793,8 @@ struct iscsi_transport *iscsi_sysfs_get_transport_by_hba(uint32_t host_no)
 	char id[NAME_SIZE];
 	int rc;
 
-	if (host_no == -1)
-		return NULL;
+	if (host_no > MAX_HOST_NO)
+		return NULL;	/* not set? */
 
 	snprintf(id, sizeof(id), ISCSI_HOST_ID, host_no);
 	rc = sysfs_get_str(id, SCSI_HOST_SUBSYS, "proc_name", name,
@@ -1805,7 +1869,7 @@ int iscsi_sysfs_for_each_device(void *data, int host_no, uint32_t sid,
 	int h, b, t, l, i, n, err = 0, target;
 	char devpath[PATH_SIZE];
 	char id[NAME_SIZE];
-	char path_full[PATH_SIZE];
+	char path_full[3*PATH_SIZE];
 
 	target = get_target_no_from_sid(sid, &err);
 	if (err)
@@ -1820,6 +1884,13 @@ int iscsi_sysfs_for_each_device(void *data, int host_no, uint32_t sid,
 
 	snprintf(path_full, sizeof(path_full), "%s%s/device/target%d:0:%d",
 		 sysfs_path, devpath, host_no, target);
+
+	if (strlen(path_full) > PATH_SIZE) {
+		log_debug(3, "Could not lookup devpath for %s %s (too long)",
+			  ISCSI_SESSION_SUBSYS, id);
+		return ISCSI_ERR_SYSFS_LOOKUP;
+	}
+
 	n = scandir(path_full, &namelist, trans_filter,
 		    alphasort);
 	if (n <= 0)
@@ -1855,23 +1926,48 @@ void iscsi_sysfs_set_queue_depth(void *data, int hostno, int target, int lun)
 		log_error("Could not queue depth for LUN %d err %d.", lun, err);
 }
 
-void iscsi_sysfs_set_device_online(void *data, int hostno, int target, int lun)
+void iscsi_sysfs_set_device_online(__attribute__((unused))void *data,
+				   int hostno, int target, int lun)
 {
-	char *write_buf = "running\n";
+	char *write_buf = "running\n", *state;
 	char id[NAME_SIZE];
 	int err;
 
 	snprintf(id, sizeof(id), "%d:0:%d:%d", hostno, target, lun);
 	log_debug(4, "online device %s", id);
 
+	state = sysfs_get_value(id, SCSI_SUBSYS, "state");
+	if (!state) {
+		log_error("Could not read state for LUN %s\n", id);
+		goto set_state;
+	}
+
+	if (!strcmp(state, "running"))
+		goto done;
+	/*
+	 * The kernel can start to perform session level recovery cleanup
+	 * any time after the conn start call, so we only want to change the
+	 * state if we are in one of the offline states.
+	 */
+	if (strcmp(state, "offline") && strcmp(state, "transport-offline")) {
+		log_debug(4, "Dev not offline. Skip onlining %s", id);
+		goto done;
+	}
+
+set_state:
 	err = sysfs_set_param(id, SCSI_SUBSYS, "state", write_buf,
 			      strlen(write_buf));
 	if (err && err != EINVAL)
 		/* we should read the state */
 		log_error("Could not online LUN %d err %d.", lun, err);
+
+done:
+	if (state)
+		free(state);
 }
 
-void iscsi_sysfs_rescan_device(void *data, int hostno, int target, int lun)
+void iscsi_sysfs_rescan_device(__attribute__((unused))void *data,
+			       int hostno, int target, int lun)
 {
 	char *write_buf = "1";
 	char id[NAME_SIZE];
@@ -1882,7 +1978,7 @@ void iscsi_sysfs_rescan_device(void *data, int hostno, int target, int lun)
 			strlen(write_buf));
 }
 
-pid_t iscsi_sysfs_scan_host(int hostno, int async)
+pid_t iscsi_sysfs_scan_host(int hostno, int async, int autoscan)
 {
 	char id[NAME_SIZE];
 	char *write_buf = "- - -";
@@ -1890,7 +1986,11 @@ pid_t iscsi_sysfs_scan_host(int hostno, int async)
 
 	if (async)
 		pid = fork();
-	if (pid == 0) {
+
+	if (pid >= 0 && !autoscan) {
+		if (pid)
+			log_debug(4, "host%d in manual scan mode, skipping scan", hostno);
+	} else if (pid == 0) {
 		/* child */
 		log_debug(4, "scanning host%d", hostno);
 

@@ -28,5 +28,8 @@ grep -vq '^GenerateName=yes' /etc/iscsi/initiatorname.iscsi || die_with_file /et
 grep -q '^InitiatorName=' /etc/iscsi/initiatorname.iscsi || die_with_file /etc/iscsi/initiatorname.iscsi "InitiatorName is not set"
 
 # Make sure the daemon is started
-service iscsid status || die "iscsid not running"
-pgrep -c iscsid >/dev/null || die "iscsid not running"
+systemctl is-active iscsid.socket || die "iscsid socket not running"
+# no-op discovery to socket activate service
+iscsiadm -m discovery -t sendtargets -p 127.0.0.1 >/dev/null 2>&1|| /bin/true
+systemctl is-active iscsid.service || die "iscsid service not running"
+pgrep -c iscsid >/dev/null || die "iscsid process not running"

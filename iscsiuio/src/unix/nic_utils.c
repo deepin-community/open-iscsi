@@ -76,11 +76,13 @@ static const char uio_uevent_path_template[] = "/sys/class/uio/uio%d/uevent";
 
 static const char base_iscsi_host_name[] = "/sys/class/iscsi_host/";
 static const char host_template[] = "host%d";
-static const char iscsi_host_path_template[] = "/sys/class/iscsi_host/host%d";
 static const char iscsi_host_path_netdev_template[] =
 	"/sys/class/iscsi_host/host%d/netdev";
 static const char cnic_uio_sysfs_resc_template[] =
 	"/sys/class/uio/uio%i/device/resource%i";
+static const char iscsi_transport_handle_template[] =
+	"/sys/class/iscsi_transport/%s/handle";
+static const char host_pfx[] = "host";
 
 /**
  *  manually_trigger_uio_event() - If the uio file node doesn't exist then
@@ -243,6 +245,7 @@ int nic_discover_iscsi_hosts()
 						"space for NIC %s "
 						"during scan", raw);
 
+					free(raw);
 					rc = -ENOMEM;
 					break;
 				}
@@ -250,6 +253,7 @@ int nic_discover_iscsi_hosts()
 				strncpy(nic->eth_device_name, raw, raw_size);
 				nic->config_device_name = nic->eth_device_name;
 				nic->log_name = nic->eth_device_name;
+				nic->host_no = host_no;
 
 				if (nic_fill_name(nic) != 0) {
 					free(nic);
@@ -302,7 +306,7 @@ static int nic_util_enable_disable_multicast(nic_t *nic, uint32_t cmd)
 	/* Prepare the request */
 	memset(&ifr, 0, sizeof(ifr));
 	strncpy(ifr.ifr_name, nic->eth_device_name,
-		sizeof(nic->eth_device_name));
+		sizeof(ifr.ifr_name));
 	memcpy(ifr.ifr_hwaddr.sa_data, multicast_addr.addr, ETH_ALEN);
 
 	fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -557,6 +561,112 @@ error:
 }
 
 /**
+ *  from_uio_find_associated_host() - Given the uio minor number
+ *      this function will try to find the assoicated iscsi host
+ *  @param uio_minor - minor number of the UIO device
+ *  @param name - char buffer which will be filled if successful
+ *  @param name_size - size of the name buffer
+ *  @return >0 minor number <0 an error
+ */
+static int from_uio_find_associated_host(nic_t *nic, int uio_minor,
+					 char *name, size_t name_size)
+{
+	char *path;
+	int rc;
+	int count;
+	struct dirent **files;
+	char *parsed_name;
+	int i;
+	int path_iterator;
+	char *search_paths[] = { "/sys/class/uio/uio%i/device/" };
+	int path_to[] = { 5, 1 };
+	int (*search_filters[]) (const struct dirent *) = { filter_host_name, };
+	char *(*extract_name[]) (struct dirent **files) = {  extract_none, };
+	int extract_name_offset[] = { 0 };
+
+	path = malloc(PATH_MAX);
+	if (!path) {
+		LOG_ERR(PFX "Could not allocate memory for path");
+		rc = -ENOMEM;
+		goto error;
+	}
+
+	for (path_iterator = 0;
+	     path_iterator < sizeof(search_paths) / sizeof(search_paths[0]);
+	     path_iterator++) {
+		/*  Build the path to determine uio name */
+		rc = sprintf(path, search_paths[path_iterator], uio_minor);
+
+		wait_for_file_node_timed(nic, path, path_to[path_iterator]);
+
+		count = scandir(path, &files,
+				search_filters[path_iterator], alphasort);
+
+		switch (count) {
+		case 1: {
+			char *parsed_src;
+			size_t parsed_size;
+
+			parsed_name = (*extract_name[path_iterator]) (files);
+			if (!parsed_name) {
+				LOG_WARN(PFX "Couldn't find delimiter in: %s",
+					 files[0]->d_name);
+
+				break;
+			}
+
+			parsed_src = parsed_name + extract_name_offset[path_iterator];
+			parsed_size = strlen(parsed_src);
+			if (parsed_size >= name_size) {
+				LOG_WARN(PFX "uio device name too long: %s (max %d)",
+					parsed_src, (int)name_size - 1);
+				rc = -EINVAL;
+			} else {
+				strncpy(name, parsed_src, name_size);
+				rc = 0;
+			}
+
+			free(files[0]);
+			free(files);
+
+			break;
+		}
+
+		case 0:
+			rc = -EINVAL;
+			break;
+
+		case -1:
+			LOG_WARN(PFX "Error when scanning path: %s[%s]",
+				 path, strerror(errno));
+			rc = -EINVAL;
+			break;
+
+		default:
+			LOG_WARN(PFX
+				 "Too many entries when looking for device: %s",
+				 path);
+
+			/*  Cleanup the scandir() call */
+			for (i = 0; i < count; i++)
+				free(files[i]);
+			free(files);
+
+			rc = -EINVAL;
+			break;
+		}
+
+		if (rc == 0)
+			break;
+	}
+
+error:
+	free(path);
+
+	return rc;
+}
+
+/**
  *  filter_uio_name() - This is the callback used by scandir when looking for
  *                      the number of uio entries
  */
@@ -652,10 +762,16 @@ int from_phys_name_find_assoicated_uio_device(nic_t *nic)
 			continue;
 		}
 
-		rc = from_uio_find_associated_eth_device(nic,
-							 uio_minor,
-							 eth_name,
-							 sizeof(eth_name));
+		if (!memcmp(host_pfx, nic->config_device_name,
+			    strlen(host_pfx))) {
+			rc = from_uio_find_associated_host(nic, uio_minor,
+							   eth_name,
+							   sizeof(eth_name));
+		} else {
+			rc = from_uio_find_associated_eth_device(nic, uio_minor,
+								 eth_name,
+								 sizeof(eth_name));
+		}
 		if (rc != 0) {
 			LOG_WARN("uio minor: %d not valid [%D]", uio_minor, rc);
 			continue;
@@ -926,9 +1042,9 @@ void prepare_nic_thread(nic_t *nic)
 		LOG_INFO("Created nic thread: %s", nic->log_name);
 	}
 
-	pthread_mutex_unlock(&nic->nic_mutex);
 
 error:
+	pthread_mutex_unlock(&nic->nic_mutex);
 	return;
 }
 
@@ -1124,6 +1240,38 @@ int detemine_initial_uio_events(nic_t *nic, uint32_t *num_of_events)
 
 	rc = 0;
 error:
+	if (raw)
+		free(raw);
+
+	return rc;
+}
+
+int get_iscsi_transport_handle(nic_t *nic, uint64_t *handle)
+{
+	char *raw = NULL;
+	uint32_t raw_size = 0;
+	ssize_t elements_read;
+	char temp_path[sizeof(iscsi_transport_handle_template) + 8];
+	int rc;
+
+	/*  Capture RX buffer size */
+	snprintf(temp_path, sizeof(temp_path),
+		 iscsi_transport_handle_template, nic->library_name);
+
+	rc = capture_file(&raw, &raw_size, temp_path);
+	if (rc != 0)
+		goto error;
+
+	elements_read = sscanf(raw, "%" PRIu64, handle);
+	if (elements_read != 1) {
+		LOG_ERR(PFX "%s: Couldn't parse transport handle from %s",
+			nic->log_name, temp_path);
+		rc = -EIO;
+		goto error;
+	}
+
+	rc = 0;
+error:
 	if (raw != NULL)
 		free(raw);
 
@@ -1296,6 +1444,10 @@ nic_interface_t *nic_find_nic_iface(nic_t *nic,
 	nic_interface_t *current_vlan = NULL;
 
 	while (current != NULL) {
+		LOG_DEBUG(PFX "%s: incoming protocol: %d, vlan_id:%d iface_num: %d, request_type: %d",
+			  nic->log_name, protocol, vlan_id, iface_num,  request_type);
+		LOG_DEBUG(PFX "%s: host:%d iface_num: 0x%x VLAN: %d protocol: %d",
+			  nic->log_name, nic->host_no, current->iface_num, current->vlan_id, current->protocol);
 		if (current->protocol != protocol)
 			goto next;
 

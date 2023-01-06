@@ -1,0 +1,2 @@
+# disabled libsystemd in d-i
+NO_SYSTEMD=1

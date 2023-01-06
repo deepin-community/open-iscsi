@@ -34,6 +34,7 @@ struct iscsi_auth_config;
 struct flashnode_rec;
 
 #define SCSI_MAX_STATE_VALUE 32
+#define ISCSID_RESP_POLL_TIMEOUT 60000
 
 extern void free_transports(void);
 extern char *iscsi_sysfs_get_iscsi_kernel_version(void);
@@ -53,6 +54,7 @@ extern int iscsi_sysfs_for_each_iface_on_host(void *data, uint32_t host_no,
 extern int iscsi_sysfs_for_each_session(void *data, int *nr_found,
 					iscsi_sysfs_session_op_fn *fn,
 					int in_parallel);
+extern int iscsi_sysfs_count_sessions(void);
 extern int iscsi_sysfs_for_each_host(void *data, int *nr_found,
 				     iscsi_sysfs_host_op_fn *fn);
 extern uint32_t iscsi_sysfs_get_host_no_from_sid(uint32_t sid, int *err);
@@ -87,7 +89,7 @@ extern void iscsi_sysfs_get_negotiated_session_conf(int sid,
 				struct iscsi_session_operational_config *conf);
 extern void iscsi_sysfs_get_negotiated_conn_conf(int sid,
 				struct iscsi_conn_operational_config *conf);
-extern pid_t iscsi_sysfs_scan_host(int hostno, int async);
+extern pid_t iscsi_sysfs_scan_host(int hostno, int async, int autoscan);
 extern int iscsi_sysfs_get_session_state(char *state, int sid);
 extern int iscsi_sysfs_get_host_state(char *state, int host_no);
 extern int iscsi_sysfs_get_device_state(char *state, int host_no, int target,

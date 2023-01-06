@@ -14,6 +14,9 @@
 #define DEF_TGT_RESET_TIMEO	30
 #define DEF_HOST_RESET_TIMEO	60
 
+/* session reopen max retries */
+#define	DEF_SESSION_REOPEN_MAX	0
+
 /* q depths */
 #define CMDS_MAX	128
 #define QUEUE_DEPTH	32
@@ -45,3 +48,6 @@
 
 /* login retries */
 #define DEF_INITIAL_LOGIN_RETRIES_MAX	4
+
+/* autoscan enabled */
+#define DEF_INITIAL_SCAN	1
