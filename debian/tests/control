@@ -3,4 +3,9 @@ Restrictions: needs-root, isolation-machine, breaks-testbed
 
 Tests: nested
 Restrictions: needs-root, isolation-machine, breaks-testbed, allow-stderr
-Depends: targetcli-fb, qemu-system, qemu-utils, python3, python3-netifaces
+Depends:
+ python3,
+ python3-netifaces,
+ qemu-system,
+ qemu-utils,
+ targetcli-fb

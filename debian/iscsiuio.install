@@ -1,2 +1,2 @@
 debian/extra/initramfs/hooks/iscsiuio usr/share/initramfs-tools/hooks/
-usr/sbin/iscsiuio sbin/
+usr/sbin/iscsiuio usr/sbin/

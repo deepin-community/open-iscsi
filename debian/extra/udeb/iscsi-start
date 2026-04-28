@@ -17,4 +17,4 @@ if ! [ -f /etc/iscsi/initiatorname.iscsi ]; then
 fi
 
 modprobe -q iscsi_tcp 2>/dev/null >&2
-/sbin/iscsid
+/usr/sbin/iscsid

@@ -1,10 +1,10 @@
-debian/tmp-udeb/etc/iscsi/iscsid.conf etc/iscsi/
-debian/tmp-udeb/sbin/iscsiadm sbin/
-debian/tmp-udeb/sbin/iscsid sbin/
-debian/tmp-udeb/sbin/iscsi_discovery sbin/
-debian/tmp-udeb/sbin/iscsi-iname sbin/
-debian/tmp-udeb/sbin/iscsistart sbin/
-debian/extra/udeb/iscsi-start sbin/
 debian/extra/udeb/finish-install.d/10open-iscsi usr/lib/finish-install.d/
+debian/extra/udeb/iscsi-start usr/sbin/
+debian/tmp-udeb/etc/iscsi/iscsid.conf etc/iscsi/
 # Ship shared libraries along with the executable in a single udeb
 debian/tmp-udeb/usr/lib/${DEB_HOST_MULTIARCH}/libopeniscsiusr*.so.* usr/lib/${DEB_HOST_MULTIARCH}/
+debian/tmp-udeb/usr/sbin/iscsi-iname usr/sbin/
+debian/tmp-udeb/usr/sbin/iscsi_discovery usr/sbin/
+debian/tmp-udeb/usr/sbin/iscsiadm usr/sbin/
+debian/tmp-udeb/usr/sbin/iscsid usr/sbin/
+debian/tmp-udeb/usr/sbin/iscsistart usr/sbin/

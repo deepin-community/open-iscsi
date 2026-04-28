@@ -282,7 +282,7 @@ int iface_conf_write(struct iface_rec *iface)
 	if (rc)
 		goto close_f;
 
-	idbm_print(IDBM_PRINT_TYPE_IFACE, iface, 1, f);
+	rc = idbm_print(IDBM_PRINT_TYPE_IFACE, iface, 1, f);
 	idbm_unlock();
 
 close_f:
@@ -1046,8 +1046,6 @@ int iface_setup_from_boot_context(struct iface_rec *iface,
 			return 0;
 		}
 	} else if (strlen(context->iface)) {
-/* this ifdef is only temp until distros and firmwares are updated */
-#ifdef OFFLOAD_BOOT_SUPPORTED
 		char transport_name[ISCSI_TRANSPORT_NAME_MAXLEN];
 		int rc;
 
@@ -1075,9 +1073,6 @@ int iface_setup_from_boot_context(struct iface_rec *iface,
 		}
 
 		strlcpy(iface->netdev, context->iface, sizeof(iface->netdev));
-#else
-		return 0;
-#endif
 	} else
 		return 0;
 

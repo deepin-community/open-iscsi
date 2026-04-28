@@ -20,12 +20,12 @@ fi
 # Author: Christian Seiler <christian@iwakd.de>
 
 DESC="iSCSI initiator daemon"
-DAEMON=/sbin/iscsid
+DAEMON=/usr/sbin/iscsid
 PIDFILE=/run/iscsid.pid
 OMITDIR=/run/sendsigs.omit.d
 
 do_start_prepare() {
-	if ! /lib/open-iscsi/startup-checks.sh ; then
+	if ! /usr/lib/open-iscsi/startup-checks.sh ; then
 		exit 1
 	fi
 }

@@ -34,11 +34,11 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/prctl.h>
 #ifndef	NO_SYSTEMD
 #include <systemd/sd-daemon.h>
 #endif
 
+#include "iface.h"
 #include "iscsid.h"
 #include "mgmt_ipc.h"
 #include "event_poll.h"
@@ -50,16 +50,11 @@
 #include "idbm.h"
 #include "version.h"
 #include "iscsi_sysfs.h"
-#include "iface.h"
 #include "session_info.h"
 #include "sysdeps.h"
 #include "discoveryd.h"
 #include "iscsid_req.h"
 #include "iscsi_err.h"
-
-#ifndef PR_SET_IO_FLUSHER
-#define PR_SET_IO_FLUSHER 57
-#endif
 
 /* global config info */
 struct iscsi_daemon_config daemon_config;
@@ -226,7 +221,9 @@ static int sync_session(__attribute__((unused))void *data,
 				  iscsi_err_to_str(err));
 			return 0;
 		}
-		iscsi_sysfs_scan_host(host_no, 0, idbm_session_autoscan(NULL));
+
+		if (idbm_session_autoscan(NULL))
+			iscsi_sysfs_scan_host(host_no, info->sid, 0, false);
 		return 0;
 	}
 
@@ -290,7 +287,7 @@ retry:
 		sleep(1);
 		goto retry;
 	} else if (rc == ISCSI_ERR_SESS_EXISTS) {
-		log_debug(1, "sync session %d returned ISCSI_ERR_SESS_EXISTS", info->sid);
+		conn_log_connect(1, NULL, "sync session %d returned ISCSI_ERR_SESS_EXISTS", info->sid);
 	}
 
 	return 0;
@@ -584,9 +581,11 @@ int main(int argc, char *argv[])
 		daemon_config.safe_logout = 1;
 	free(safe_logout);
 
+	/* This is now the default, but still setting it explicitly for clarity */
+	ipc->auth_type = ISCSI_IPC_AUTH_UID;
 	ipc_auth_uid = cfg_get_string_param(config_file, "iscsid.ipc_auth_uid");
-	if (ipc_auth_uid && !strcmp(ipc_auth_uid, "Yes"))
-		ipc->auth_type = ISCSI_IPC_AUTH_UID;
+	if (ipc_auth_uid && !strcmp(ipc_auth_uid, "No"))
+		ipc->auth_type = ISCSI_IPC_AUTH_LEGACY;
 	free(ipc_auth_uid);
 
 	/* see if we have any stale sessions to recover */
@@ -621,7 +620,7 @@ int main(int argc, char *argv[])
 
 	/* oom-killer will not kill us at the night... */
 	if (oom_adjust())
-		log_debug(1, "can not adjust oom-killer's pardon");
+		log_warning("Cannot adjust oom-killer's pardon");
 
 	/* we don't want our active sessions to be paged out... */
 	if (mlockall(MCL_CURRENT | MCL_FUTURE)) {
@@ -630,14 +629,8 @@ int main(int argc, char *argv[])
 		exit(ISCSI_ERR);
 	}
 
-	if (prctl(PR_SET_IO_FLUSHER, 1, 0, 0, 0) == -1) {
-		if (errno == EINVAL) {
-			log_info("prctl could not mark iscsid with the PR_SET_IO_FLUSHER flag, because the feature is not supported in this kernel. Will proceed, but iscsid may hang during session level recovery if memory is low.\n");
-		} else {
-			log_error("prctl could not mark iscsid with the PR_SET_IO_FLUSHER flag due to error %s\n",
-				  strerror(errno));
-		}
-	}
+	if (set_thread_io_flusher(1) == EINVAL)
+		log_info("prctl could not mark iscsid with the PR_SET_IO_FLUSHER flag, because the feature is not supported in this kernel. Will proceed, but iscsid may hang during session level recovery if memory is low.\n");
 
 	set_state_to_ready();
 	event_loop(ipc, control_fd, mgmt_ipc_fd);

@@ -6,7 +6,7 @@
 # be terminated.
 #
 
-ISCSIADM=/sbin/iscsiadm
+ISCSIADM=/usr/sbin/iscsiadm
 PIDFILE=/run/iscsid.pid
 
 ISCSI_ROOT_KEEP_ALL_SESSIONS_AT_SHUTDOWN=0

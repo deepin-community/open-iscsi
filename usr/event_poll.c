@@ -197,8 +197,8 @@ void event_loop(struct iscsi_ipc *ipc, int control_fd, int mgmt_ipc_fd)
 
 			if (poll_array[POLL_IPC].revents) {
 				switch (ipc->auth_type) {
-				case ISCSI_IPC_AUTH_UID:
-					mgmt_ipc_handle_uid_only(mgmt_ipc_fd);
+				case ISCSI_IPC_AUTH_LEGACY:
+					mgmt_ipc_handle_legacy(mgmt_ipc_fd);
 					break;
 				default:
 					mgmt_ipc_handle(mgmt_ipc_fd);
@@ -214,7 +214,7 @@ void event_loop(struct iscsi_ipc *ipc, int control_fd, int mgmt_ipc_fd)
 						  "exiting", errno);
 					break;
 				} else {
-					log_debug(1, "Poll was woken by an alarm");
+					log_debug(4, "Poll was woken by an alarm");
 				}
 			}
 		} else if (res < 0) {

@@ -12,7 +12,7 @@ Before=shutdown.target
 [Service]
 Type=forking
 PIDFile=/run/iscsiuio.pid
-ExecStart=/sbin/iscsiuio
+ExecStart=/usr/sbin/iscsiuio
 
 [Install]
 WantedBy=sysinit.target

@@ -1,0 +1,25 @@
+From: Chris Hofstaedtler <zeha@debian.org>
+Date: Sun, 19 May 2024 01:25:18 +0200
+Subject: build: disable -Wno-all
+
+---
+ meson.build | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/meson.build b/meson.build
+index 9138ce9..5704ba2 100644
+--- a/meson.build
++++ b/meson.build
+@@ -102,10 +102,10 @@ endif
+ #
+ libsysdeps = static_library('sysdeps', sysdeps_files,
+   include_directories: [usr_inc, main_inc, lib_inc],
+-  c_args: '-Wno-all')
++  )
+ libfwparam = static_library('fwparam', fwparam_files,
+   include_directories: [usr_inc, main_inc, lib_inc],
+-  c_args: [genl_cargs, '-Wno-all'])
++  c_args: genl_cargs)
+ 
+ #
+ # build libopeniscsiusr, since it does not

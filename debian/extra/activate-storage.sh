@@ -5,7 +5,7 @@
 # service.
 #
 
-PATH=/sbin:/bin
+PATH=/usr/sbin:/sbin:/usr/bin:/bin
 
 MULTIPATH=/sbin/multipath
 VGCHANGE=/sbin/vgchange

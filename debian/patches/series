@@ -1,3 +1,3 @@
-lp1755858-default-iscsid_conf-to-iscsid_socket.patch
-multiarch-path.patch
-ignore-werror.patch
+debian/lp1755858-default-iscsid_conf-to-iscsid_socket.patch
+build-disable-Wno-all.patch
+Fix-incorrect-parsing-of-node.discovery_type-static-and-f.patch

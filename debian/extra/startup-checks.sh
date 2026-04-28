@@ -5,7 +5,7 @@
 # hadn't been done before.
 #
 
-PATH=/sbin:/bin
+PATH=/usr/sbin:/sbin:/usr/bin:/bin
 
 NAMEFILE=/etc/iscsi/initiatorname.iscsi
 CONFIGFILE=/etc/iscsi/iscsid.conf
@@ -28,12 +28,12 @@ fi
 
 # see if we need to generate a unique iSCSI InitiatorName
 if grep -q "^GenerateName=yes" $NAMEFILE ; then
-	if [ ! -x /sbin/iscsi-iname ] ; then
-		echo "Error: /sbin/iscsi-iname does not exist, driver was not successfully installed" >&2
+	if [ ! -x /usr/sbin/iscsi-iname ] ; then
+		echo "Error: /usr/sbin/iscsi-iname does not exist, driver was not successfully installed" >&2
 		exit 1
 	fi
 	# Generate a unique InitiatorName and save it
-	INAME=`/sbin/iscsi-iname -p iqn.1993-08.org.debian:01`
+	INAME=`/usr/sbin/iscsi-iname -p iqn.1993-08.org.debian:01`
 	if [ "$INAME" != "" ] ; then
 		echo "## DO NOT EDIT OR REMOVE THIS FILE!" > $NAMEFILE
 		echo "## If you remove this file, the iSCSI daemon will not start." >> $NAMEFILE

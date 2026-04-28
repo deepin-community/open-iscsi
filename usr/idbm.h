@@ -31,7 +31,6 @@
 #include "flashnode.h"
 
 #define NODE_CONFIG_DIR		ISCSI_DB_ROOT"/nodes"
-#define SLP_CONFIG_DIR		ISCSI_DB_ROOT"/slp"
 #define ISNS_CONFIG_DIR		ISCSI_DB_ROOT"/isns"
 #define STATIC_CONFIG_DIR	ISCSI_DB_ROOT"/static"
 #define FW_CONFIG_DIR		ISCSI_DB_ROOT"/fw"
@@ -52,6 +51,14 @@
 #define NAME_MAXVAL	128   /* the maximum length of key name */
 #define VALUE_MAXVAL	256   /* the maximum length of 223 bytes in the RFC. */
 #define OPTS_MAXVAL	8
+
+/*
+ * wait up to DB_LOCK_USECS_WAIT * DB_LOCK_RETRIES to a cquire
+ * the DB lock, before giving up
+ */
+#define DB_LOCK_USECS_WAIT		10000	/* per-loop waiting for lock */
+#define	DB_LOCK_RETRIES			3000	/* number of retries */
+
 typedef struct recinfo {
 	int		type;
 	char		name[NAME_MAXVAL];
@@ -81,8 +88,6 @@ typedef struct idbm {
 	recinfo_t	ninfo[MAX_KEYS];
 	discovery_rec_t	drec_st;
 	recinfo_t	dinfo_st[MAX_KEYS];
-	discovery_rec_t	drec_slp;
-	recinfo_t	dinfo_slp[MAX_KEYS];
 	discovery_rec_t	drec_isns;
 	recinfo_t	dinfo_isns[MAX_KEYS];
 } idbm_t;
@@ -142,7 +147,6 @@ extern int idbm_bind_ifaces_to_nodes(idbm_disc_nodes_fn *disc_node_fn,
 extern int idbm_add_discovery(discovery_rec_t *newrec);
 extern void idbm_sendtargets_defaults(struct iscsi_sendtargets_config *cfg);
 extern void idbm_isns_defaults(struct iscsi_isns_config *cfg);
-extern void idbm_slp_defaults(struct iscsi_slp_config *cfg);
 extern int idbm_session_autoscan(struct iscsi_session *session);
 extern int idbm_discovery_read(discovery_rec_t *rec, int type, char *addr,
 				int port);
@@ -171,6 +175,12 @@ extern int idbm_rec_update_param(recinfo_t *info, char *name, char *value,
 				 int line_number);
 extern void idbm_recinfo_node(node_rec_t *r, recinfo_t *ri);
 
+/* from libopeniscsiusr/idbm.h */
+enum iscsi_auth_method {
+	ISCSI_AUTH_METHOD_NONE,
+	ISCSI_AUTH_METHOD_CHAP,
+};
+
 enum {
 	IDBM_PRINT_TYPE_DISCOVERY,
 	IDBM_PRINT_TYPE_NODE,
@@ -179,7 +189,7 @@ enum {
 	IDBM_PRINT_TYPE_FLASHNODE
 };
 
-extern void idbm_print(int type, void *rec, int show, FILE *f);
+extern int idbm_print(int type, void *rec, int show, FILE *f);
 
 struct boot_context;
 extern struct node_rec *idbm_create_rec(char *targetname, int tpgt,
