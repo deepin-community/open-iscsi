@@ -30,6 +30,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/resource.h>
+#include <sys/prctl.h>
 
 #include "sysdeps.h"
 #include "log.h"
@@ -37,6 +38,10 @@
 #include "iface.h"
 #include "session_info.h"
 #include "iscsi_util.h"
+
+#ifndef PR_SET_IO_FLUSHER
+#define PR_SET_IO_FLUSHER 57
+#endif
 
 int setup_abstract_addr(struct sockaddr_un *addr, char *unix_sock_name)
 {
@@ -65,36 +70,43 @@ void daemon_init(void)
 	close(fd);
 }
 
-#define ISCSI_OOM_PATH_LEN 48
-
+/*
+ * make a best effort at ajusting our nice
+ * score and our OOM score, but it's not considered
+ * fatal if either adjustment fails
+ *
+ * return 0 on success of OOM adjustment
+ */
 int oom_adjust(void)
 {
 	int fd;
-	char path[ISCSI_OOM_PATH_LEN];
-	struct stat statb;
+	int res = 0;
 
 	errno = 0;
 	if (nice(-10) == -1 && errno != 0)
-		log_debug(1, "Could not increase process priority: %s",
+		log_warning("Could not increase process priority: %s",
 			  strerror(errno));
 
-	snprintf(path, ISCSI_OOM_PATH_LEN, "/proc/%d/oom_score_adj", getpid());
-	if (stat(path, &statb)) {
-		/* older kernel so use old oom_adj file */
-		snprintf(path, ISCSI_OOM_PATH_LEN, "/proc/%d/oom_adj",
-			 getpid());
-	}
-	fd = open(path, O_WRONLY);
-	if (fd < 0)
+	/*
+	 * try the modern method of adjusting our OOM score,
+	 * then try the old one, if that fails
+	 */
+	if ((fd = open("/proc/self/oom_score_adj", O_WRONLY)) >= 0) {
+		if ((res = write(fd, "-1000", 5)) < 0)
+			log_warning("Could not set /proc/self/oom_score_adj to -1000: %s",
+				strerror(errno));
+	} else if ((fd = open("/proc/self/oom_adj", O_WRONLY)) >= 0) {
+		if ((res = write(fd, "-17", 3)) < 0)
+			log_warning("Could not set /proc/self/oom_adj to -16: %s",
+				strerror(errno));
+	} else
 		return -1;
-	if (write(fd, "-16", 3) < 0) /* for 2.6.11 */
-		log_debug(1, "Could not set oom score to -16: %s",
-			  strerror(errno));
-	if (write(fd, "-17", 3) < 0) /* for Andrea's patch */
-		log_debug(1, "Could not set oom score to -17: %s",
-			  strerror(errno));
+
 	close(fd);
-	return 0;
+	if (res < 0)
+		return res;
+	else
+		return 0;
 }
 
 char*
@@ -267,7 +279,7 @@ char *cfg_get_string_param(char *pathname, const char *key)
  *
  * If address1 is blank then it matches any string passed in.
  */
-static int iscsi_addr_match(char *address1, char *address2)
+int iscsi_addr_match(const char *address1, const char *address2)
 {
 	struct addrinfo hints1, hints2, *res1, *res2;
 	int rc;
@@ -292,7 +304,7 @@ static int iscsi_addr_match(char *address1, char *address2)
 	 */
 	rc = getaddrinfo(address1, NULL, &hints1, &res1);
 	if (rc) {
-		log_debug(1, "Match error. Could not resolve %s: %s", address1,
+		conn_log_connect(1, NULL, "Match error. Could not resolve %s: %s", address1,
 			  gai_strerror(rc));
 		return 0;
 
@@ -300,7 +312,7 @@ static int iscsi_addr_match(char *address1, char *address2)
 
 	rc = getaddrinfo(address2, NULL, &hints2, &res2);
 	if (rc) {
-		log_debug(1, "Match error. Could not resolve %s: %s", address2,
+		conn_log_connect(1, NULL, "Match error. Could not resolve %s: %s", address2,
 			  gai_strerror(rc));
 		rc = 0;
 		goto free_res1;
@@ -384,4 +396,26 @@ int iscsi_match_target(void *data, struct session_info *info)
 				     info->persistent_address,
 				     info->persistent_port, NULL,
 				     MATCH_ANY_SID);
+}
+
+/*
+ * set thread's PR_SET_IO_FLUSHER flag
+ *
+ * val: 1 to set to set thread's PR_SET_IO_FLUSHER flag
+ *      0 to clear thread's PR_SET_IO_FLUSHER flag
+ *
+ * return: return 0 on success, else error number is returned
+ */
+int set_thread_io_flusher(int val)
+{
+	if (prctl(PR_SET_IO_FLUSHER, val, 0, 0, 0) == 0)
+		return 0;
+
+	/*
+	 * prctl would return EINVAL if the kernel do not support PR_SET_IO_FLUSHER
+	 * so donot print error log if errorno is EINVAL to avoid unnecessary errorlog
+	 */
+	if (errno != EINVAL)
+		log_error("prctl could not %s thread's PR_SET_IO_FLUSHER flag due to error %s\n", val ? "set" : "clear", strerror(errno));
+	return errno;
 }

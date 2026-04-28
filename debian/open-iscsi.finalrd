@@ -8,8 +8,8 @@ then
     . /usr/share/initramfs-tools/hook-functions
     copy_exec /bin/grep
     copy_exec /bin/sleep
-    copy_exec /sbin/iscsiadm
-    copy_exec /sbin/iscsid
+    copy_exec /usr/sbin/iscsiadm
+    copy_exec /usr/sbin/iscsid
     # hm, not sure why expr is copied
     copy_exec /usr/bin/expr
     copy_file config /etc/iscsi/iscsid.conf

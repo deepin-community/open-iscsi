@@ -8,7 +8,7 @@ DefaultDependencies=no
 Conflicts=shutdown.target
 Before=shutdown.target
 # Must have some pre-defined targets to login to
-ConditionDirectoryNotEmpty=|/etc/iscsi/nodes
+ConditionDirectoryNotEmpty=|/var/lib/iscsi/nodes
 # or have a session to use via iscsid
 ConditionDirectoryNotEmpty=|/sys/class/iscsi_session
 
@@ -20,11 +20,11 @@ RemainAfterExit=true
 # consider an error)
 SuccessExitStatus=15 21
 # Note: iscsid will be socket activated by iscsiadm
-ExecStart=/sbin/iscsiadm -m node --loginall=automatic
-ExecStart=/lib/open-iscsi/activate-storage.sh
-ExecStop=/lib/open-iscsi/umountiscsi.sh
+ExecStart=/usr/sbin/iscsiadm -m node --loginall=automatic
+ExecStart=/usr/lib/open-iscsi/activate-storage.sh
+ExecStop=/usr/lib/open-iscsi/umountiscsi.sh
 ExecStop=/bin/sync
-ExecStop=/lib/open-iscsi/logout-all.sh
+ExecStop=/usr/lib/open-iscsi/logout-all.sh
 
 [Install]
 WantedBy=sysinit.target

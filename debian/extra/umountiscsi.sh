@@ -39,20 +39,10 @@
 #      superfluous and also not be a layering violation, as it
 #      currently is.
 #
-# CODING CHOICES:
-#    - On systems running sysvinit, this script might be called without
-#      /usr being mounted, so a lot of very useful commands are not
-#      available: head, tail, stat, awk, etc. This makes the script
-#      quite ugly at places, but that can't be avoided.
-#
 # Author: Christian Seiler <christian@iwakd.de>
 #
 
-# Make sure we don't include /usr in our path, else future modifications
-# to this script might accidentally use something from there and cause
-# failure on separate-/usr sysvinit systems that isn't immediately
-# noticed.
-PATH=/sbin:/bin
+PATH=/usr/sbin:/sbin:/usr/bin:/bin
 
 EXCLUDE_MOUNTS_AT_SHUTDOWN=""
 if [ -f /etc/default/open-iscsi ]; then

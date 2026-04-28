@@ -2,16 +2,16 @@
  * Copyright (C) 2017-2018 Red Hat, Inc.
  *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  * Author: Gris Ge <fge@redhat.com>
@@ -40,6 +40,12 @@
 #define BOOT_NAME_MAXLEN	256
 #define IDBM_DUMP_SIZE		8192
 
+/*
+ * wait up to DB_LOCK_USECS_WAIT * DB_LOCK_RETRIES to a cquire
+ * the DB lock, before giving up
+ */
+#define DB_LOCK_USECS_WAIT		10000	/* per-loop waiting for lock */
+#define	DB_LOCK_RETRIES			3000	/* number of retries */
 
 struct __DLL_LOCAL idbm;
 
@@ -56,7 +62,9 @@ enum iscsi_chap_algs {
 	ISCSI_AUTH_CHAP_ALG_MD5 = 5,
 	ISCSI_AUTH_CHAP_ALG_SHA1 = 6,
 	ISCSI_AUTH_CHAP_ALG_SHA256 = 7,
+#ifdef SHA3_256_SUPPORTED
 	ISCSI_AUTH_CHAP_ALG_SHA3_256 = 8,
+#endif
 	AUTH_CHAP_ALG_MAX_COUNT = 5,
 };
 
@@ -70,7 +78,8 @@ enum discovery_type {
 	DISCOVERY_TYPE_SENDTARGETS,
 	DISCOVERY_TYPE_ISNS,
 	DISCOVERY_TYPE_OFFLOAD_SENDTARGETS,
-	DISCOVERY_TYPE_SLP,
+	/* SLP is Not Used --  kept as place holder */
+	DISCOVERY_TYPE_SLP_NOT_IMPLEMENTED,
 	DISCOVERY_TYPE_STATIC,
 	DISCOVERY_TYPE_FW,
 };
@@ -211,6 +220,7 @@ struct iscsi_session_idbm {
 	char					boot_root[BOOT_NAME_MAXLEN];
 	char					boot_nic[BOOT_NAME_MAXLEN];
 	char					boot_target[BOOT_NAME_MAXLEN];
+	int64_t                                 conn_reopen_log_freq;
 
 };
 

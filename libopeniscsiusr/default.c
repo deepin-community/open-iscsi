@@ -2,16 +2,16 @@
  * Copyright (C) 2017-2018 Red Hat, Inc.
  *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  * Author: Gris Ge <fge@redhat.com>
@@ -77,6 +77,7 @@ void _default_node(struct iscsi_node *node)
 	node->session.nr_sessions = 1;
 	node->session.initial_login_retry_max = DEF_INITIAL_LOGIN_RETRIES_MAX;
 	node->session.reopen_max = DEF_SESSION_REOPEN_MAX;
+	node->session.conn_reopen_log_freq = DEF_CONN_REOPEN_LOG_FREQ;
 	node->session.auth.authmethod = 0;
 	/* TYPE_INT_LIST fields should be initialized to ~0 to indicate unset values */
 	memset(node->session.auth.chap_algs, ~0, sizeof(node->session.auth.chap_algs));

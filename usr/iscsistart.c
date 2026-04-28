@@ -33,6 +33,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include "iface.h"
 #include "initiator.h"
 #include "iscsi_ipc.h"
 #include "event_poll.h"
@@ -45,7 +46,6 @@
 #include "iscsi_sysfs.h"
 #include "iscsi_settings.h"
 #include "fw_context.h"
-#include "iface.h"
 #include "sysdeps.h"
 #include "iscsid_req.h"
 #include "iscsi_err.h"
@@ -548,6 +548,7 @@ int main(int argc, char *argv[])
 	log_debug(1, "TPGT=%d", config_rec.tpgt);
 	log_debug(1, "IP Address=%s", config_rec.conn[0].address);
 
+	/* This is now the default, but still setting it explicitly for clarity */
 	ipc->auth_type = ISCSI_IPC_AUTH_UID;
 
 	/* log the version, so that we can tell if the daemon and kernel module

@@ -17,12 +17,15 @@
 /* session reopen max retries */
 #define	DEF_SESSION_REOPEN_MAX	0
 
+/* session reopen log frequency i.e number of reopens per message */
+#define DEF_CONN_REOPEN_LOG_FREQ 1
+
 /* q depths */
 #define CMDS_MAX	128
 #define QUEUE_DEPTH	32
 
-/* system */
-#define XMIT_THREAD_PRIORITY	-20
+/* system -- default used for setpriority() of the xmit workqueue process */
+#define DEFAULT_XMIT_THREAD_PRIORITY	0
 
 /* interface */
 #define UNKNOWN_VALUE		"<empty>"

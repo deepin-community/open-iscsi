@@ -1,0 +1,2 @@
+# iscsiadm will create /var/lib/iscsi/nodes in this directory
+/var/lib/iscsi

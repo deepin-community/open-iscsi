@@ -7,52 +7,42 @@ include /usr/share/dpkg/buildflags.mk
 include /usr/share/dpkg/pkg-info.mk
 export KBUILD_BUILD_TIMESTAMP = "@$(SOURCE_DATE_EPOCH)"
 
+CONFOPTS += -Diqn_prefix=iqn.1993-08.org.debian:01
+CONFOPTS += -Drulesdir=/usr/lib/udev/rules.d/
+
 UDEB := $(filter open-iscsi-udeb,$(shell dh_listpackages))
 
-ifneq ($(UDEB),)
-TREENAMES = build-deb build-udeb
-else
-TREENAMES = build-deb
-endif
-
 %:
-	dh $@
+	dh $@ --buildsystem=meson
 
 execute_before_dh_clean:
-	for treename in $(TREENAMES); do \
-		rm -rf debian/$$treename ;\
-	done
+	rm -rf debian/build-deb
+	rm -rf debian/build-udeb
 	rm -rf debian/tmp-udeb
 
-execute_before_dh_auto_configure:
-	# no out of tree build support, prepare two source trees
-	for treename in $(TREENAMES); do \
-		mkdir debian/$$treename ;\
-		cp -r -t debian/$$treename $$(find . -mindepth 1 -maxdepth 1 \! -name debian \! -name .git) ;\
-	done
-
 override_dh_auto_configure:
-	for treename in $(TREENAMES); do \
-		cat debian/buildconfig.common debian/buildconfig.$$treename Makefile > debian/$$treename/Makefile ;\
-		CFLAGS="$(CPPFLAGS) $(CFLAGS)" dh_auto_configure --sourcedirectory=debian/$$treename ;\
-		CFLAGS="$(CPPFLAGS) $(CFLAGS)" dh_auto_configure --sourcedirectory=debian/$$treename/iscsiuio ;\
-	done
+	dh_auto_configure --builddirectory=debian/build-deb  -- $(CONFOPTS)
+ifneq ($(UDEB),)
+	dh_auto_configure --builddirectory=debian/build-udeb -- $(CONFOPTS) -Dno_systemd=true
+endif
 
 override_dh_auto_build:
-	for treename in $(TREENAMES); do \
-		CFLAGS="$(CPPFLAGS) $(CFLAGS)" NO_SYSTEMD=$$NO_SYSTEMD dh_auto_build --sourcedirectory=debian/$$treename ;\
-	done
+	dh_auto_build --builddirectory=debian/build-deb
+ifneq ($(UDEB),)
+	dh_auto_build --builddirectory=debian/build-udeb
+endif
+
+override_dh_auto_test:
 
 override_dh_auto_install:
-	# workaround upstream makefile parallelism problem
-	dh_auto_install --no-parallel --sourcedirectory=debian/build-deb
+	dh_auto_install --builddirectory=debian/build-deb
 ifneq ($(UDEB),)
-	dh_auto_install --no-parallel --sourcedirectory=debian/build-udeb --destdir=$(CURDIR)/debian/tmp-udeb
+	dh_auto_install --builddirectory=debian/build-udeb --destdir=$(CURDIR)/debian/tmp-udeb
 endif
 
 ifneq ($(UDEB),)
 execute_after_dh_install:
-	if strings debian/open-iscsi-udeb/sbin/iscsid | grep libsystemd.so ; then \
+	if strings debian/open-iscsi-udeb/usr/sbin/iscsid | grep libsystemd.so ; then \
 		echo ERROR: udeb linked to libsystemd ;\
 		exit 1 ;\
 	fi
@@ -87,7 +77,9 @@ endif
 # On Debian we can use either busybox or busybox-static, but on Ubuntu
 # and derivatives only busybox-initramfs will work.
 BUSYBOX_PACKAGES := $(shell if dpkg-vendor --derives-from ubuntu; then echo busybox-initramfs; else echo busybox busybox-static; fi)
+FINALRD_PACKAGE := $(shell if dpkg-vendor --derives-from ubuntu; then echo "finalrd (>= 3)"; else echo ""; fi)
 
 override_dh_gencontrol:
 	echo >> debian/open-iscsi.substvars "busybox:Recommends=$(wordlist 2,100,$(BUSYBOX_PACKAGES:%=| %))"
+	echo >> debian/open-iscsi.substvars "finalrd:Recommends=$(FINALRD_PACKAGE)"
 	dh_gencontrol

@@ -31,6 +31,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 
+#include "iface.h"
 #include "initiator.h"
 #include "transport.h"
 #include "iscsid.h"
@@ -44,7 +45,6 @@
 #include "scsi.h"
 #include "iscsi_sysfs.h"
 #include "iscsi_settings.h"
-#include "iface.h"
 #include "host.h"
 #include "sysdeps.h"
 #include "iscsi_err.h"
@@ -260,6 +260,9 @@ __session_conn_create(iscsi_session_t *session, int cid)
 
 	/* set session reconnection retry max */
 	session->reopen_max = rec->session.reopen_max;
+	session->conn_reopen_log_freq = rec->session.conn_reopen_log_freq;
+	if (session->conn_reopen_log_freq < 1)
+		session->conn_reopen_log_freq = DEF_CONN_REOPEN_LOG_FREQ;
 
 	conn->state = ISCSI_CONN_STATE_FREE;
 	conn->session = session;
@@ -343,11 +346,11 @@ __session_create(node_rec_t *rec, struct iscsi_transport *t, int *rc)
 
 	session = calloc(1, sizeof (*session));
 	if (session == NULL) {
-		log_debug(1, "can not allocate memory for session");
+		conn_log_connect(1, NULL, "can not allocate memory for session");
 		*rc = ISCSI_ERR_NOMEM;
 		return NULL;
 	}
-	log_debug(2, "Allocted session %p", session);
+	conn_log_connect(2, session, "Allocted session %p", session);
 
 	INIT_LIST_HEAD(&session->list);
 	session->t = t;
@@ -395,26 +398,37 @@ __session_create(node_rec_t *rec, struct iscsi_transport *t, int *rc)
 	session->isid[5] = 0;
 
 	/* setup authentication variables for the session*/
-	iscsi_setup_authentication(session, &rec->session.auth);
+	if (iscsi_setup_authentication(session, &rec->session.auth)) {
+		/*
+		 * FIXME: The return value used to be ignored here. It
+		 * would be nice to start paying attention to it, but
+		 * that may break a few corner-case login scenarios,
+		 * and in the case of a root-iSCSI setup, may break it
+		 * badly. So, for now, just print a warning that
+		 * ignoring such errors is being deprecated.
+		 */
+		log_warning("Warning: DEPRECATED: Ignoring Authorization setup failure. "
+			    "This will be considered a login authorization error in the future.");
+	}
 
 	iscsi_session_init_params(session);
 
-        if (t->template->bind_ep_required) {
-                hostno = iscsi_sysfs_get_host_no_from_hwinfo(&rec->iface, rc);
-                if (!*rc) {
-                        /*
-                         * if the netdev or mac was set, then we are going to want
-                         * to want to bind the all the conns/eps to a specific host
-                         * if offload is used.
-                         */
-                        session->conn[0].bind_ep = 1;
-                        session->hostno = hostno;
-                } else if (*rc == ISCSI_ERR_HOST_NOT_FOUND) {
-                        goto free_session;	
-                } else {
-                         *rc = 0;
-                }
-        }
+	if (t->template->bind_ep_required) {
+		hostno = iscsi_sysfs_get_host_no_from_hwinfo(&rec->iface, rc);
+		if (!*rc) {
+			/*
+			 * if the netdev or mac was set, then we are going to want
+			 * to want to bind the all the conns/eps to a specific host
+			 * if offload is used.
+			 */
+			session->conn[0].bind_ep = 1;
+			session->hostno = hostno;
+		} else if (*rc == ISCSI_ERR_HOST_NOT_FOUND) {
+			goto free_session;
+		} else {
+			 *rc = 0;
+		}
+	}
 
 	/* reset session reopen count */
 	session->reopen_cnt = 0;
@@ -577,7 +591,7 @@ __session_conn_reopen(iscsi_conn_t *conn, queue_task_t *qtask, int do_stop,
 	iscsi_session_t *session = conn->session;
 	uint32_t delay;
 
-	log_debug(1, "re-opening session %d (reopen_cnt %d)", session->id,
+	conn_log_connect(1, session, "re-opening session %d (reopen_cnt %d)", session->id,
 			session->reopen_cnt);
 
 	qtask->conn = conn;
@@ -666,7 +680,7 @@ static int iscsi_retry_initial_login(struct iscsi_conn *conn)
 	 * then it is time to give up
 	 */
 	if (timercmp(&now, &fail_time, >)) {
-		conn_debug(1, conn, "Giving up on initial login attempt after "
+		conn_log_connect(1, conn->session, "Giving up on initial login attempt after "
 			  "%u seconds.",
 			  initial_login_retry_max * conn->login_timeout);
 		return 0;
@@ -730,13 +744,18 @@ static void iscsi_login_eh(struct iscsi_conn *conn, struct queue_task *qtask,
 				  session->reopen_cnt, session->reopen_max);
 			if (session->reopen_max &&
 			    (session->reopen_cnt > session->reopen_max)) {
-				log_info("Giving up on session %d after %d retries", 
+				conn_log_connect(1, session, "Giving up on session %d after %d retries",
 						session->id, session->reopen_max);
 				session_conn_shutdown(conn, qtask, err);
 				break;
 			}
-			/* timeout during reopen connect. try again */
-			session_conn_reopen(conn, qtask, 0);
+			/*
+			 * stop connection for recovery if error is not
+			 * timeout
+			 */
+			if (err != ISCSI_ERR_TRANS_TIMEOUT)
+				stop_flag = STOP_CONN_RECOVER;
+			session_conn_reopen(conn, qtask, stop_flag);
 			break;
 		case R_STAGE_SESSION_CLEANUP:
 			session_conn_shutdown(conn, qtask, err);
@@ -1003,11 +1022,16 @@ void free_initiator(void)
 }
 
 static void session_scan_host(struct iscsi_session *session, int hostno,
-			      queue_task_t *qtask)
+			      queue_task_t *qtask, bool rescan)
 {
 	pid_t pid;
 
-	pid = iscsi_sysfs_scan_host(hostno, 1, idbm_session_autoscan(session));
+	if (!rescan && !idbm_session_autoscan(session)) {
+		mgmt_ipc_write_rsp(qtask, ISCSI_SUCCESS);
+		return;
+	}
+
+	pid = iscsi_sysfs_scan_host(hostno, session->id, 1, rescan);
 	if (pid == 0) {
 		mgmt_ipc_write_rsp(qtask, ISCSI_SUCCESS);
 
@@ -1057,7 +1081,8 @@ setup_full_feature_phase(iscsi_conn_t *conn)
 		 * don't want to re-scan it on recovery.
 		 */
 		if (conn->id == 0)
-			session_scan_host(session, session->hostno, c->qtask);
+			session_scan_host(session, session->hostno, c->qtask,
+					   false);
 
 		log_warning("Connection%d:%d to [target: %s, portal: %s,%d] "
 			    "through [iface: %s] is operational now",
@@ -1068,7 +1093,7 @@ setup_full_feature_phase(iscsi_conn_t *conn)
 	} else {
 		session->notify_qtask = NULL;
 
-		session_online_devs(session->hostno, session->id);
+		session_scan_host(session, session->hostno, NULL, true);
 		mgmt_ipc_write_rsp(c->qtask, ISCSI_SUCCESS);
 		log_warning("connection%d:%d is operational after recovery "
 			    "(%d attempts)", session->id, conn->id,
@@ -1221,7 +1246,7 @@ static void iscsi_recv_async_msg(iscsi_conn_t *conn, struct iscsi_hdr *hdr)
 
 		if (sshdr.asc == 0x3f && sshdr.ascq == 0x0e
 		    && idbm_session_autoscan(session))
-			session_scan_host(session, session->hostno, NULL);
+			session_scan_host(session, session->hostno, NULL, true);
 		break;
 	case ISCSI_ASYNC_MSG_REQUEST_LOGOUT:
 		conn_warn(conn, "Target requests logout within %u seconds" , ntohs(async_hdr->param3));
@@ -1274,7 +1299,7 @@ static void iscsi_recv_login_rsp(struct iscsi_conn *conn)
 	int err = ISCSI_ERR_FATAL_LOGIN;
 
 	if (iscsi_login_rsp(session, c)) {
-		conn_debug(1, conn, "login_rsp ret (%d)", c->ret);
+		conn_log_connect(1, session, "login_rsp ret (%d)", c->ret);
 
 		switch (__login_response_status(conn, c->ret)) {
 		case CONN_LOGIN_FAILED:
@@ -1368,12 +1393,12 @@ static void session_conn_recv_pdu(void *data)
 		break;
 	case ISCSI_CONN_STATE_XPT_WAIT:
 		iscsi_ev_context_put(ev_context);
-		conn_debug(1, conn, "ignoring incoming PDU in XPT_WAIT. "
+		conn_log_connect(1, conn->session, "ignoring incoming PDU in XPT_WAIT. "
 			  "let connection re-establish or fail");
 		break;
 	case ISCSI_CONN_STATE_CLEANUP_WAIT:
 		iscsi_ev_context_put(ev_context);
-		conn_debug(1, conn, "ignoring incoming PDU in XPT_WAIT. "
+		conn_log_connect(1, conn->session, "ignoring incoming PDU in XPT_WAIT. "
 			  "let connection cleanup");
 		break;
 	default:
@@ -1394,8 +1419,23 @@ static void session_increase_wq_priority(struct iscsi_session *session)
 	uint32_t host_no;
 
 	/* drivers like bnx2i and qla4xxx do not have a write wq */
-	if (session->t->caps & CAP_DATA_PATH_OFFLOAD)
+	if (session->t->caps & CAP_DATA_PATH_OFFLOAD) {
+		log_debug(5, "Skipping setting xmit thread priority: Not needed for offload");
 		return;
+	}
+
+	/*
+	 * optimization: if the priority to be set is zero, just
+	 * return now, saving the trouble of scanning the proc table
+	 *
+	 * TODO: this function should be removed some day "soon", since
+	 * it ony seems to be needed in older (5.4) kernels. But for now
+	 * the optimization should be enough
+	 */
+	if (session->nrec.session.xmit_thread_priority == 0) {
+		log_debug(5, "Skipping setting xmit thread priority to zero: not needed");
+		return;
+	}
 
 	proc_dir = opendir(PROC_DIR);
 	if (!proc_dir)
@@ -1452,6 +1492,9 @@ static void session_increase_wq_priority(struct iscsi_session *session)
 				if (!setpriority(PRIO_PROCESS, pid,
 					session->nrec.session.xmit_thread_priority)) {
 					closedir(proc_dir);
+					log_debug(5, "Set priority for pid=%u to \"%d\"",
+						  pid,
+						  session->nrec.session.xmit_thread_priority);
 					return;
 				} else
 					break;
@@ -1460,9 +1503,9 @@ static void session_increase_wq_priority(struct iscsi_session *session)
 	}
 	closedir(proc_dir);
 fail:
-	log_error("Could not set session%d priority. "
-		  "READ/WRITE throughout and latency could be "
-		  "affected.", session->id);
+	log_warning("Could not set session%d priority. "
+		    "READ/WRITE throughout and latency could be affected.",
+		    session->id);
 }
 
 static int session_ipc_create(struct iscsi_session *session)
@@ -1695,8 +1738,7 @@ static void session_conn_process_login(void *data)
 		 * scan host is one-time deal. We
 		 * don't want to re-scan it on recovery.
 		 */
-		session_scan_host(session, session->hostno,
-				 c->qtask);
+		session_scan_host(session, session->hostno, c->qtask, false);
 		session->notify_qtask = NULL;
 
 		log_warning("Connection%d:%d to [target: %s, portal: %s,%d] "
@@ -1706,6 +1748,7 @@ static void session_conn_process_login(void *data)
 			    session->nrec.conn[conn->id].port,
 			    session->nrec.iface.name);
 	} else {
+		session_scan_host(session, session->hostno, NULL, true);
 		session->notify_qtask = NULL;
 		mgmt_ipc_write_rsp(c->qtask, ISCSI_SUCCESS);
 	}
@@ -2204,7 +2247,7 @@ static void iscsi_async_session_creation(uint32_t host_no, uint32_t sid)
 
 	log_debug(3, "session created sid %u host no %d", sid, host_no);
 	session_online_devs(host_no, sid);
-	session_scan_host(NULL, host_no, NULL);
+	session_scan_host(NULL, host_no, NULL, false);
 }
 
 static void iscsi_async_session_destruction(uint32_t host_no, uint32_t sid)

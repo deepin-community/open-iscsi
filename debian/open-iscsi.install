@@ -1,18 +1,18 @@
-etc/iscsi/iscsid.conf
-debian/extra/umountiscsi.sh lib/open-iscsi/
-debian/extra/logout-all.sh lib/open-iscsi/
-debian/extra/startup-checks.sh lib/open-iscsi/
-debian/extra/activate-storage.sh lib/open-iscsi/
-debian/extra/net-interface-handler lib/open-iscsi/
-debian/iscsid.service lib/systemd/system/
-usr/lib/systemd/system/iscsid.socket lib/systemd/system/
-debian/extra/udev/* lib/udev/rules.d/
-debian/open-iscsi.finalrd usr/share/finalrd/
+debian/extra/activate-storage.sh usr/lib/open-iscsi/
 debian/extra/initramfs/hooks/iscsi usr/share/initramfs-tools/hooks/
-debian/extra/initramfs/local-top/iscsi usr/share/initramfs-tools/scripts/local-top/
 debian/extra/initramfs/local-bottom/iscsi usr/share/initramfs-tools/scripts/local-bottom/
-sbin/iscsiadm
-sbin/iscsid
-sbin/iscsi_discovery
-sbin/iscsi-iname
-sbin/iscsistart
+debian/extra/initramfs/local-top/iscsi usr/share/initramfs-tools/scripts/local-top/
+debian/extra/logout-all.sh usr/lib/open-iscsi/
+debian/extra/net-interface-handler usr/lib/open-iscsi/
+debian/extra/startup-checks.sh usr/lib/open-iscsi/
+debian/extra/udev/* usr/lib/udev/rules.d/
+debian/extra/umountiscsi.sh usr/lib/open-iscsi/
+debian/iscsid.service usr/lib/systemd/system/
+debian/open-iscsi.finalrd usr/share/finalrd/
+etc/iscsi/iscsid.conf
+usr/lib/systemd/system/iscsid.socket usr/lib/systemd/system/
+usr/sbin/iscsi-iname usr/sbin/
+usr/sbin/iscsi_discovery usr/sbin/
+usr/sbin/iscsiadm usr/sbin/
+usr/sbin/iscsid usr/sbin/
+usr/sbin/iscsistart usr/sbin/

@@ -52,7 +52,9 @@
 #include "idbm_fields.h"
 #include "session_mgmt.h"
 #include "iscsid_req.h"
+#ifdef ISNS_SUPPORTED
 #include <libisns/isns-proto.h>
+#endif
 #include "iscsi_err.h"
 #include "iscsi_ipc.h"
 #include "iscsi_timer.h"
@@ -257,10 +259,10 @@ str_to_type(char *str)
 	if (!strcmp("sendtargets", str) ||
 	    !strcmp("st", str))
 		type = DISCOVERY_TYPE_SENDTARGETS;
-	else if (!strcmp("slp", str))
-		type = DISCOVERY_TYPE_SLP;
+#ifdef ISNS_SUPPORTED
 	else if (!strcmp("isns", str))
 		type = DISCOVERY_TYPE_ISNS;
+#endif
 	else if (!strcmp("fw", str))
 		type = DISCOVERY_TYPE_FW;
 	else
@@ -469,7 +471,7 @@ __do_leading_login(void *data, struct list_head *list, struct node_rec *rec)
 	struct iface_rec *pattern_iface = data;
 	int nr_found;
 
-	log_debug(1, "doing leading login using iface: %s", pattern_iface->name);
+	conn_log_connect(1, NULL, "doing leading login using iface: %s", pattern_iface->name);
 
 	/* Skip any records that do not match the pattern iface */
 	if (!iface_match(pattern_iface, &rec->iface))
@@ -480,7 +482,7 @@ __do_leading_login(void *data, struct list_head *list, struct node_rec *rec)
 	 * the leading login is complete.
 	 */
 	if (iscsi_sysfs_for_each_session(rec, &nr_found, iscsi_match_target, 0)) {
-		log_debug(1, "Skipping %s: Already a session for that target",
+		conn_log_connect(1, NULL, "Skipping %s: Already a session for that target",
 			  rec->name);
 		return -1;
 	}
@@ -529,7 +531,7 @@ login_by_startup(char *mode, bool wait)
 	rc = err;
 
 	if (!list_empty(&startup.all_logins)) {
-		log_debug(1, "Logging into normal (non-leading-login) portals");
+		conn_log_connect(1, NULL, "Logging into normal (non-leading-login) portals");
 		/* Login all regular (non-leading-login) portals first */
 		err = iscsi_login_portals(NULL, &nr_found, wait,
 				&startup.all_logins, iscsi_login_portal);
@@ -548,11 +550,11 @@ login_by_startup(char *mode, bool wait)
 		struct node_rec *rec, *tmp_rec;
 		LIST_HEAD(iface_list);
 		int missed_leading_login = 0;
-		log_debug(1, "Logging into leading-login portals");
+		conn_log_connect(1, NULL, "Logging into leading-login portals");
 		iface_link_ifaces(&iface_list);
 		list_for_each_entry_safe(pattern_iface, tmp_iface, &iface_list,
 					 list) {
-			log_debug(1, "Establishing leading-logins via iface %s",
+			conn_log_connect(1, NULL, "Establishing leading-logins via iface %s",
 				  pattern_iface->name);
 			err = iscsi_login_portals_safe(pattern_iface, &nr_found,
 						       1,
@@ -785,41 +787,49 @@ static int print_nodes_config(struct iscsi_context *ctx, bool show_secret,
 			      const char *target_name, const char *address,
 			      int32_t port, const char *iface_name)
 {
-	int rc = 0;
+	int rc = ISCSI_SUCCESS;
 	struct iscsi_node **nodes = NULL;
 	struct iscsi_node *node = NULL;
 	uint32_t node_count = 0;
 	uint32_t i = 0;
-	bool match = false;
 	bool has_match = false;
 
 	rc = iscsi_nodes_get(ctx, &nodes, &node_count);
 	if (rc != LIBISCSI_OK)
 		return rc;
 
+	log_debug(7, "%s(target_name=%s, address=%s): found %d node(s) to scan ...",
+		  __FUNCTION__, target_name, address, node_count);
+
 	for (i = 0; i < node_count; ++i) {
 		node = nodes[i];
-		match = true;
+		/*
+		 * node matches *unless* one of the following conditions
+		 * is true
+		 */
 		if ((target_name != NULL) &&
 		    (strlen(target_name) != 0) &&
 		    (strcmp(target_name,
 			    iscsi_node_target_name_get(node)) != 0))
-			match = false;
+			continue;	/* target name mismatch */
+
 		if ((address != NULL) &&
 		    (strlen(address) != 0) &&
-		    (strcmp(address, iscsi_node_conn_address_get(node)) != 0))
-			match = false;
-		if ((port != -1) && (port != (int32_t)iscsi_node_conn_port_get(node)))
-			match = false;
+		    (iscsi_addr_match(address,
+				      iscsi_node_conn_address_get(node)) != 1))
+			continue;	/* address/name mismatch */
+
+		if ((port != -1) &&
+		    (port != (int32_t)iscsi_node_conn_port_get(node)))
+			continue;	/* port number mismatch */
+
 		if ((iface_name != NULL) &&
 		    (strlen(iface_name) != 0) &&
 		    (strcmp(iface_name, iscsi_node_iface_name_get(node)) != 0))
-			match = false;
+			continue;	/* iface mismatch */
 
-		if (match == true) {
-			iscsi_node_print_config(node, show_secret);
-			has_match = true;
-		}
+		iscsi_node_print_config(node, show_secret);
+		has_match = true;
 	}
 
 	iscsi_nodes_free(nodes, node_count);
@@ -872,7 +882,7 @@ static int rescan_portal(void *data, struct session_info *info)
 	iscsi_sysfs_for_each_device(NULL, host_no, info->sid,
 				    iscsi_sysfs_rescan_device);
 	/* now scan for new devices */
-	iscsi_sysfs_scan_host(host_no, 0, 1);
+	iscsi_sysfs_scan_host(host_no, info->sid, 0, false);
 	return 0;
 }
 
@@ -1240,6 +1250,7 @@ do_software_sendtargets(discovery_rec_t *drec, struct list_head *ifaces,
 	return rc;
 }
 
+#ifdef ISNS_SUPPORTED
 static int do_isns(discovery_rec_t *drec, struct list_head *ifaces,
 		   int info_level, int do_login, int op)
 {
@@ -1275,6 +1286,7 @@ static int do_isns(discovery_rec_t *drec, struct list_head *ifaces,
 
 	return rc;
 }
+#endif	/* ISNS_SUPPORTED */
 
 static int
 do_target_discovery(discovery_rec_t *drec, struct list_head *ifaces,
@@ -1337,8 +1349,10 @@ sw_discovery:
 	case DISCOVERY_TYPE_SENDTARGETS:
 		return do_software_sendtargets(drec, ifaces, info_level,
 						do_login, op, sync_drec);
+#ifdef ISNS_SUPPORTED
 	case DISCOVERY_TYPE_ISNS:
 		return do_isns(drec, ifaces, info_level, do_login, op);
+#endif
 	default:
 		log_debug(1, "Unknown Discovery Type : %d", drec->type);
 		return ISCSI_ERR_UNKNOWN_DISCOVERY_TYPE;
@@ -1347,7 +1361,7 @@ sw_discovery:
 
 
 static int
-verify_mode_params(int argc, char **argv, enum iscsiadm_mode mode)
+verify_mode_params(int argc, char **argv, enum iscsiadm_mode mode, const char *mode_str)
 {
 	int ch, longindex;
 	int ret = ISCSI_SUCCESS;
@@ -1356,7 +1370,7 @@ verify_mode_params(int argc, char **argv, enum iscsiadm_mode mode)
 	int tmp = optind;
 
 	if (mode > MODE_FW || mode < MODE_DISCOVERY) {
-		log_error("mode %d is not yet supported", mode);
+		log_error("%s mode is unkonwn/unsupported", mode_str);
 		return ISCSI_ERR_INVAL;
 	}
 
@@ -1370,9 +1384,8 @@ verify_mode_params(int argc, char **argv, enum iscsiadm_mode mode)
 		if (!strchr(allowed, ch)) {
 			if (ch == 'm' && skip_m)
 				continue;
-			log_error("%s mode: option '-%c' is not "
-				  "allowed/supported",
-				  mode_paras[mode].mode, ch);
+			log_error("%s mode: option '-%c' is not allowed/supported",
+				  mode_str, optopt);
 			ret = ISCSI_ERR_INVAL;
 			break;
 		}
@@ -2020,6 +2033,7 @@ exit_logout:
 static int iscsi_check_session_use_count(uint32_t sid) {
 	char *config_file;
 	char *safe_logout;
+	int rc = 0;
 
 	config_file = get_config_file();
 	if (!config_file) {
@@ -2028,10 +2042,11 @@ static int iscsi_check_session_use_count(uint32_t sid) {
 	}
 
 	safe_logout = cfg_get_string_param(config_file, "iscsid.safe_logout");
-	if (!safe_logout || strcmp(safe_logout, "Yes"))
-		return 0;
+	if (safe_logout && !strcmp(safe_logout, "Yes"))
+		rc = session_in_use(sid);
+	free(safe_logout);
 
-	return session_in_use(sid);
+	return rc;
 }
 
 int iscsi_logout_flashnode_sid(struct iscsi_transport *t, uint32_t host_no,
@@ -2847,7 +2862,7 @@ static int exec_node_op(struct iscsi_context *ctx, int op, int do_login,
 	int rc = 0;
 
 	if (rec)
-		log_debug(2, "%s: %s:%s node [%s,%s,%d] sid %u", __FUNCTION__,
+		conn_log_connect(2, NULL, "%s: %s:%s node [%s,%s,%d] sid %u", __FUNCTION__,
 			  rec->iface.transport_name, rec->iface.name,
 			  rec->name, rec->conn[0].address, rec->conn[0].port,
 			  rec->session.sid);
@@ -3243,10 +3258,7 @@ static int exec_disc2_op(int disc_type, char *ip, int port,
 		if (rc < 0)
 			goto do_db_op;
 		goto done;
-	case DISCOVERY_TYPE_SLP:
-		log_error("SLP discovery is not fully implemented yet.");
-		rc = ISCSI_ERR_INVAL;
-		goto done;
+#ifdef ISNS_SUPPORTED
 	case DISCOVERY_TYPE_ISNS:
 		if (port < 0)
 			port = ISNS_DEFAULT_PORT;
@@ -3256,6 +3268,7 @@ static int exec_disc2_op(int disc_type, char *ip, int port,
 		if (rc < 0)
 			goto do_db_op;
 		goto done;
+#endif
 	case DISCOVERY_TYPE_FW:
 		if (!do_discover) {
 			log_error("Invalid command. Possibly missing "
@@ -3357,10 +3370,7 @@ static int exec_disc_op(int disc_type,
 		if (rc)
 			goto done;
 		break;
-	case DISCOVERY_TYPE_SLP:
-		log_error("SLP discovery is not fully implemented yet.");
-		rc = ISCSI_ERR_INVAL;
-		break;
+#ifdef ISNS_SUPPORTED
 	case DISCOVERY_TYPE_ISNS:
 		if (!ip) {
 			log_error("Please specify portal as "
@@ -3381,6 +3391,7 @@ static int exec_disc_op(int disc_type,
 		if (rc)
 			goto done;
 		break;
+#endif
 	case DISCOVERY_TYPE_FW:
 		drec.type = DISCOVERY_TYPE_FW;
 		rc = exec_fw_op(&drec, ifaces, info_level, do_login, op, wait, NULL);
@@ -3392,8 +3403,7 @@ static int exec_disc_op(int disc_type,
 			 * mode, so we can hardcode the port check to the
 			 * iscsi default here.
 			 *
-			 * For isns or slp recs then discovery db mode
-			 * must be used.
+			 * For isns recs discovery db mode must be used.
 			 */
 			if (port < 0)
 				port = ISCSI_LISTEN_PORT;
@@ -3773,7 +3783,7 @@ main(int argc, char **argv)
 			break;
 		case 'm':
 			mode = str_to_mode(optarg);
-			rc = verify_mode_params(argc, argv, mode);
+			rc = verify_mode_params(argc, argv, mode, optarg);
 			if (ISCSI_SUCCESS != rc)
 				goto out;
 			break;
@@ -3862,8 +3872,10 @@ main(int argc, char **argv)
 		goto out;
 	}
 
-	if (mode < 0)
+	if (mode < 0) {
+		log_error("no mode specified");
 		usage(ISCSI_ERR_INVAL);
+	}
 
 	increase_max_files();
 	if (idbm_init(get_config_file)) {

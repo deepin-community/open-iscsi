@@ -2,16 +2,16 @@
  * Copyright (C) 2017-2018 Red Hat, Inc.
  *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  * Author: Gris Ge <fge@redhat.com>
@@ -27,7 +27,7 @@
  * maintained by open-iscsi@@googlegroups.com
  *
  * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published
+ * it under the terms of the GNU Lesser General Public License as published
  * by the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  *
@@ -315,27 +315,41 @@ int _idbm_lock(struct iscsi_context *ctx)
 
 	db = ctx->db;
 
+	/* if DB is already being used just increment count and return */
 	if (db->refs > 0) {
 		db->refs++;
 		return 0;
 	}
 
+	/* DB is not being used -- ensure there is a lock dir */
 	if (access(LOCK_DIR, F_OK) != 0) {
-		if (mkdir(LOCK_DIR, 0770) != 0) {
-			_error(ctx, "Could not open %s: %d %s", LOCK_DIR, errno,
-				_strerror(errno, strerr_buff));
+		if ((mkdir(LOCK_DIR, 0770) != 0) && (errno != EEXIST)) {
+			_error(ctx, "Could not open %s: %d: %s", LOCK_DIR,
+			       errno, _strerror(errno, strerr_buff));
 			return LIBISCSI_ERR_IDBM;
 		}
 	}
 
+	/* create the lock file, if needed */
 	fd = open(LOCK_FILE, O_RDWR | O_CREAT, 0666);
-	if (fd >= 0)
-		close(fd);
+	if (fd < 0) {
+		_error(ctx, "Could not open/create lock file: %s", LOCK_FILE);
+		return LIBISCSI_ERR_IDBM;
+	}
+	close(fd);
 
-	for (i = 0; i < 3000; i++) {
+	/*
+	 * try to create a link from the lock file to the
+	 * lock "write" file, retrying everying 10 miliseconds
+	 * for up to 30 seconds!
+	 *
+	 * XXX: very long -- should be configurable?
+	 */
+	for (i = 0; i < DB_LOCK_RETRIES; i++) {
 		ret = link(LOCK_FILE, LOCK_WRITE_FILE);
 		if (ret == 0)
-			break;
+			break;		/* success */
+
 		errno_save = errno;
 
 		if (errno != EEXIST) {
@@ -344,20 +358,27 @@ int _idbm_lock(struct iscsi_context *ctx)
 			       LOCK_WRITE_FILE, errno_save,
 			       _strerror(errno_save, strerr_buff));
 			return LIBISCSI_ERR_IDBM;
-		} else if (i == 0)
+		}
+
+		/* print info the first time through this loop */
+		if (i == 0)
 			_debug(ctx, "Waiting for discovery DB lock on %s",
 			       LOCK_WRITE_FILE);
 
-		usleep(10000);
+		usleep(DB_LOCK_USECS_WAIT);
 	}
 
 	if (ret != 0) {
-		_error(ctx, "Timeout on acquiring lock on DB: %s, errno: %d %s",
+		_error(ctx, "Timeout on acquiring lock on DB: %s, %d: %s",
 		       LOCK_WRITE_FILE, errno_save,
 		       _strerror(errno_save, strerr_buff));
 		return LIBISCSI_ERR_IDBM;
 	}
 
+	/*
+	 * if we get here, we were able to "own" the DB by creating
+	 * a link, so we are now the only DB user
+	 */
 	db->refs = 1;
 	return 0;
 }
@@ -776,8 +797,6 @@ updated:
 	check_password_param(node.session.auth.password_in);
 	check_password_param(discovery.sendtargets.auth.password);
 	check_password_param(discovery.sendtargets.auth.password_in);
-	check_password_param(discovery.slp.auth.password);
-	check_password_param(discovery.slp.auth.password_in);
 	check_password_param(host.auth.password);
 	check_password_param(host.auth.password_in);
 
@@ -977,7 +996,9 @@ static struct int_list_tbl chap_algs[] = {
 	{ "MD5", ISCSI_AUTH_CHAP_ALG_MD5 },
 	{ "SHA1", ISCSI_AUTH_CHAP_ALG_SHA1 },
 	{ "SHA256", ISCSI_AUTH_CHAP_ALG_SHA256 },
+#ifdef SHA3_256_SUPPORTED
 	{ "SHA3-256", ISCSI_AUTH_CHAP_ALG_SHA3_256 },
+#endif
 };
 
 static void _idbm_node_rec_link(struct iscsi_node *node, struct idbm_rec *recs, const char *iface_name)
@@ -1014,8 +1035,8 @@ static void _idbm_node_rec_link(struct iscsi_node *node, struct idbm_rec *recs, 
 		 _CANNOT_MODIFY);
 	_rec_int32(NODE_DISC_PORT, recs, node, disc_port, IDBM_SHOW, num,
 		   _CANNOT_MODIFY);
-	_rec_int_o6(NODE_DISC_TYPE, recs, node, disc_type, IDBM_SHOW,
-		    "send_targets", "isns", "offload_send_targets", "slp",
+	_rec_int_o5(NODE_DISC_TYPE, recs, node, disc_type, IDBM_SHOW,
+		    "send_targets", "isns", "offload_send_targets",
 		    "static", "fw", num, _CANNOT_MODIFY);
 
 	_rec_uint32(SESSION_INIT_CMDSN, recs, node, session.initial_cmdsn,
@@ -1089,6 +1110,8 @@ static void _idbm_node_rec_link(struct iscsi_node *node, struct idbm_rec *recs, 
 	_rec_int_o2(SESSION_SCAN, recs, node, session.scan, IDBM_SHOW, "manual",
 		    "auto", num, _CAN_MODIFY);
 	_rec_int64(SESSION_REOPEN_MAX, recs, node, session.reopen_max, IDBM_SHOW, num,
+		   _CAN_MODIFY);
+	_rec_int64(CONN_REOPEN_LOG_FREQ, recs, node, session.conn_reopen_log_freq, IDBM_SHOW, num,
 		   _CAN_MODIFY);
 
 	_rec_str(CONN_ADDR, recs, node, conn.address, IDBM_SHOW, num,

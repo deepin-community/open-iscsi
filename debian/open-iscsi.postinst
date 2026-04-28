@@ -17,13 +17,6 @@ restore_old_timeouts()
 case "$1" in
     configure)
 
-        # Compatibility symlinks
-        for file in iscsid iscsi_discovery iscsi-iname iscsistart; do
-            if [ ! -e /usr/sbin/$file ]; then
-                ln -s /sbin/$file /usr/sbin/$file
-            fi
-        done
-
         # Generate a unique iSCSI InitiatorName
         NAMEFILE=/etc/iscsi/initiatorname.iscsi
         if [ ! -e $NAMEFILE ] && [ -z "$2" ] ; then
@@ -41,6 +34,12 @@ case "$1" in
                 echo
                 exit 1;
             fi
+        fi
+
+        # Upgrade from before open-iscsi 2.1.10. Can probably go away in forky+1.
+        if [ -e /etc/iscsi/nodes ] && [ \! -e /var/lib/iscsi/nodes ] ; then
+            echo "open-iscsi: moving /etc/iscsi/nodes to /var/lib/iscsi/nodes ..."
+            mv -v /etc/iscsi/nodes /var/lib/iscsi/
         fi
     ;;
 

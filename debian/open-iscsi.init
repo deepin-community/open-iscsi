@@ -10,9 +10,9 @@
 #                    of all iSCSI targets at shutdown.
 ### END INIT INFO
 
-PATH=/sbin:/bin
-DAEMON=/sbin/iscsid
-ADM=/sbin/iscsiadm
+PATH=/usr/sbin:/sbin:/usr/bin:/bin
+DAEMON=/usr/sbin/iscsid
+ADM=/usr/sbin/iscsiadm
 PIDFILE=/run/iscsid.pid
 NAMEFILE=/etc/iscsi/initiatorname.iscsi
 CONFIGFILE=/etc/iscsi/iscsid.conf
@@ -44,7 +44,7 @@ start() {
 	starttargets
 
 	# activate LVM, mount filesystems, etc.
-	/lib/open-iscsi/activate-storage.sh
+	/usr/lib/open-iscsi/activate-storage.sh
 }
 
 starttargets() {
@@ -59,7 +59,7 @@ stoptargets() {
 	sync
 	# only logout if daemon is running, iscsiadm hangs otherwise
         if [ -s $PIDFILE ] && kill -0 `sed -n 1p $PIDFILE` >/dev/null ; then
-		/lib/open-iscsi/logout-all.sh
+		/usr/lib/open-iscsi/logout-all.sh
         fi
 
 	log_end_msg 0
@@ -71,7 +71,7 @@ stop() {
 	# will exclude it - and even if that shouldn't work, the mount
 	# point will be busy)
 	log_daemon_msg "Umounting iSCSI filesystems"
-	/lib/open-iscsi/umountiscsi.sh
+	/usr/lib/open-iscsi/umountiscsi.sh
 	umount_exit_status=$?
 	log_end_msg $umount_exit_status
 

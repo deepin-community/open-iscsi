@@ -26,7 +26,7 @@ fi
 # Hooks for loading iscsi bits into the initramfs
 . /usr/share/initramfs-tools/hook-functions
 
-copy_exec /sbin/iscsistart /sbin
+copy_exec /usr/sbin/iscsistart /usr/sbin
 cp /etc/iscsi/initiatorname.iscsi $DESTDIR/etc
 if [ -r /etc/iscsi/iscsi.initramfs ] ; then
 	cp /etc/iscsi/iscsi.initramfs $DESTDIR/etc
